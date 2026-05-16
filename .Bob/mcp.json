@@ -1,0 +1,56 @@
+{
+  "mcpServers": {
+    "git": {
+      "command": "mcp-git",
+      "args": [],
+      "env": {
+        "GIT_REPO_PATH": "/Users/samyak-dev/Development/DeckIQ"
+      }
+    },
+    "filesystem": {
+      "command": "mcp-filesystem",
+      "args": [],
+      "env": {
+        "ROOT_DIR": "/Users/samyak-dev/Development/DeckIQ"
+      }
+    },
+    "terminal": {
+      "command": "mcp-terminal",
+      "args": [],
+      "env": {
+        "WORKING_DIR": "/Users/samyak-dev/Development/DeckIQ"
+      }
+    },
+    "http": {
+      "command": "mcp-http",
+      "args": [],
+      "env": {
+        "ALLOW_LIST": "https://cloud.ibm.com,https://www.ibm.com,https://api.us-south.natural-language-understanding.watson.cloud.ibm.com,https://us-south.ml.cloud.ibm.com,https://iam.cloud.ibm.com"
+      }
+    },
+    "watsonx-ai": {
+      "__comment__": "IBM watsonx.ai MCP Server. Replace TODO values before use.",
+      "command": "/TODO/path/to/uv",
+      "__command_help__": "On Mac with uv installed via brew: /opt/homebrew/bin/uv. Run 'which uv' to find path.",
+      "args": [
+        "--directory",
+        "/TODO/path/to/watsonx-mcp-server",
+        "__args_help__: clone https://github.com/IBM/watsonx-ai-mcp-server then point --directory at the repo root",
+        "run",
+        "watsonx-mcp-server"
+      ],
+      "env": {
+        "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
+        "WATSONX_API_KEY": "TODO_your_ibm_cloud_api_key",
+        "WATSONX_PROJECT_ID": "TODO_your_watsonx_project_id",
+        "__env_help__": "Copy values from IBM Cloud -> watsonx.ai -> Manage -> Projects -> your project -> Credentials"
+      },
+      "autoApprove": [
+        "generate_text",
+        "list_models",
+        "get_model_details"
+      ],
+      "__autoApprove_help__": "Remove autoApprove list to require manual approval for every Granite call (recommended for production use)"
+    }
+  }
+}

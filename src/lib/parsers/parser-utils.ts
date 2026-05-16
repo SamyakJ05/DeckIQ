@@ -5,6 +5,17 @@
 import type { SlideContent, SlideType } from '@/types';
 
 /**
+ * Determines if a slide/page text is likely image-only (no meaningful text extracted)
+ * @param text - The extracted text from a slide/page
+ * @returns true if the text is empty or too short to be meaningful
+ */
+export function isLikelyImageOnly(text: string | undefined): boolean {
+  if (!text) return true;
+  const compact = text.replace(/\s/g, '');
+  return compact.length < 15; // threshold: less than 15 non-whitespace chars
+}
+
+/**
  * Clean and normalize extracted text
  */
 export function cleanText(text: string): string {

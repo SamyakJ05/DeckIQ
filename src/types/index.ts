@@ -29,6 +29,7 @@ export interface SlideContent {
   title?: string;
   bodyText: string;
   estimatedSlideType: SlideType;
+  usedOcr?: boolean; // True if OCR was used to extract text from image-only page
 }
 
 // ============================================================================
@@ -115,6 +116,7 @@ export interface SlideAnalysis {
   nluResult: NLUResult;
   graniteScores: RubricScores;
   slideHealthScore: number;
+  usedOcr?: boolean; // True if OCR was used to extract text from image-only page
 }
 
 // ============================================================================

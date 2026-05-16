@@ -260,6 +260,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         nluResult: slide.nluResult,
         graniteScores,
         slideHealthScore,
+        usedOcr: slides[index].usedOcr, // Propagate OCR flag from parsed slide
       };
     });
 

@@ -1,41 +1,80 @@
 /**
- * PDF page to image conversion for OCR
- * Simplified stub implementation for hackathon
- * 
- * NOTE: This is a minimal implementation. In production, you would use:
- * - pdf2pic or similar library for server-side PDF rendering
- * - Or a service like AWS Textract for OCR
- * 
- * For the hackathon, we'll return null and log a warning,
- * which will cause the OCR to be skipped gracefully.
+ * PDF page → PNG buffer using pdfjs-dist (legacy Node build) + @napi-rs/canvas.
+ * Node-only. No browser globals required.
  */
 
+import path from 'path';
+// Legacy build is required for Node.js — the standard build refuses to run without a browser worker
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { createCanvas } from '@napi-rs/canvas';
 import { log } from '../utils/logger';
 
+// Point pdfjs at the bundled worker file so it can spin up an in-process fake worker.
+// The file:// scheme is required for Node.js Worker URL resolution.
+const workerPath = path.resolve(
+  process.cwd(),
+  'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
+);
+GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
+
+const DEFAULT_SCALE = 2.0;
+
 /**
- * Attempts to render a PDF page to an image buffer for OCR
- * 
- * CURRENT LIMITATION: This is a stub implementation.
- * Proper PDF-to-image rendering requires native dependencies (Cairo, Poppler)
- * which are complex to install. For the hackathon demo, we'll skip OCR
- * and document this as a known limitation.
- * 
- * @param pdfBuffer - The PDF file buffer
+ * Render a single PDF page to a PNG buffer.
+ * Throws on failure — callers should catch and fall back to empty text.
+ *
+ * @param pdfBuffer  - Full PDF file bytes
  * @param pageNumber - 1-based page number
- * @returns Image buffer or null (currently always returns null)
+ * @param scale      - Viewport scale factor (higher = better OCR resolution)
  */
 export async function renderPdfPageToImageBuffer(
   pdfBuffer: Buffer,
-  pageNumber: number
-): Promise<Buffer | null> {
-  log.warn(
-    `PDF-to-image rendering not implemented for page ${pageNumber}. ` +
-    `OCR will be skipped. To enable OCR, install pdf2pic or similar library with native dependencies.`
-  );
-  
-  // Return null to skip OCR gracefully
-  // The parsing pipeline will handle this and use the original (empty) text
-  return null;
-}
+  pageNumber: number,
+  scale: number = DEFAULT_SCALE
+): Promise<Buffer> {
+  log.info(`Rendering PDF page ${pageNumber} to image (scale=${scale})`);
 
-// Made with Bob
+  const data = new Uint8Array(pdfBuffer);
+
+  const loadingTask = getDocument({
+    data,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    // Prevents pdfjs from fetching standard fonts over the network
+    standardFontDataUrl: undefined,
+  });
+
+  const pdf = await loadingTask.promise;
+
+  try {
+    if (pageNumber < 1 || pageNumber > pdf.numPages) {
+      throw new Error(
+        `Page ${pageNumber} out of range — PDF has ${pdf.numPages} page(s)`
+      );
+    }
+
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale });
+
+    const width = Math.ceil(viewport.width);
+    const height = Math.ceil(viewport.height);
+    const canvas = createCanvas(width, height);
+    const context = canvas.getContext('2d');
+
+    await page.render({
+      canvasContext: context as unknown as CanvasRenderingContext2D,
+      viewport,
+    }).promise;
+
+    page.cleanup();
+
+    const imageBuffer = canvas.toBuffer('image/png');
+    log.info(
+      `Page ${pageNumber} rendered: ${width}×${height}px, ${imageBuffer.length} bytes`
+    );
+
+    return imageBuffer;
+  } finally {
+    await pdf.destroy();
+  }
+}

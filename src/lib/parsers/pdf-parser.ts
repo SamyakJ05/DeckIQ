@@ -52,25 +52,23 @@ export async function parsePDF(buffer: Buffer): Promise<SlideContent[]> {
         }
         
         log.info(`Page ${pageNumber} appears to be image-only, attempting OCR`);
-        
-        // Render page to image
-        const imageBuffer = await renderPdfPageToImageBuffer(buffer, pageNumber);
-        
-        if (imageBuffer) {
-          // Perform OCR
+
+        try {
+          // Render page to image then OCR
+          const imageBuffer = await renderPdfPageToImageBuffer(buffer, pageNumber);
           const ocrText = await ocrImageBuffer(imageBuffer);
-          
-          // Use OCR text if it's meaningful
-          if (ocrText && ocrText.trim().length >= MIN_OCR_TEXT_LENGTH) {
-            log.info(`OCR successful for page ${pageNumber}, extracted ${ocrText.length} characters`);
-            enhancedPagesText.push({ text: ocrText, usedOcr: true });
+          const trimmed = ocrText.trim();
+
+          if (trimmed.length >= MIN_OCR_TEXT_LENGTH) {
+            log.info(`OCR successful for page ${pageNumber}, extracted ${trimmed.length} characters`);
+            enhancedPagesText.push({ text: trimmed, usedOcr: true });
             ocrPagesCount++;
           } else {
-            log.warn(`OCR produced insufficient text for page ${pageNumber}, using original`);
+            log.warn(`OCR produced insufficient text for page ${pageNumber} (${trimmed.length} chars), using original`);
             enhancedPagesText.push({ text: pageText, usedOcr: false });
           }
-        } else {
-          log.warn(`Failed to render page ${pageNumber} to image, using original text`);
+        } catch (renderErr) {
+          log.warn(`Failed to render/OCR page ${pageNumber}: ${renderErr instanceof Error ? renderErr.message : String(renderErr)}`);
           enhancedPagesText.push({ text: pageText, usedOcr: false });
         }
       } else {

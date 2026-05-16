@@ -280,6 +280,17 @@ export default function SlideReviewPage() {
               }}>
                 {String(slide.slideNumber).padStart(2, '0')} / {totalSlides}
               </span>
+              {slide.usedOcr && (
+                <span style={{
+                  position: 'absolute', bottom: '16px', left: '16px',
+                  fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600,
+                  color: 'rgba(255,200,80,0.9)', letterSpacing: '0.06em',
+                  background: 'rgba(255,200,80,0.12)', border: '1px solid rgba(255,200,80,0.3)',
+                  borderRadius: '4px', padding: '2px 7px',
+                }}>
+                  OCR extracted
+                </span>
+              )}
             </div>
           )}
 
@@ -333,8 +344,17 @@ export default function SlideReviewPage() {
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 700, letterSpacing: '-0.3px', color: 'var(--ink)' }}>
                 {slide?.slideType ?? '—'}
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 Slide {slide ? String(slide.slideNumber).padStart(2, '0') : '—'} · Score {slide?.slideHealthScore ?? '—'}
+                {slide?.usedOcr && (
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600,
+                    color: 'rgb(200,150,40)', background: 'rgba(255,200,80,0.1)',
+                    border: '1px solid rgba(255,200,80,0.25)', borderRadius: '4px', padding: '1px 6px',
+                  }}>
+                    OCR
+                  </span>
+                )}
               </div>
             </div>
 

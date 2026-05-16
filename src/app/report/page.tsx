@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import type { DeckAnalysisResult, RubricScores } from '@/types';
+import { formatDimension } from '@/lib/formatters';
+import { EmotionalJourneyChart } from '@/components/EmotionalJourneyChart';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -48,23 +50,38 @@ function radarPoints(r: RubricScores): string {
     .join(' ');
 }
 
-const RUBRIC_LABELS: Record<string, string> = {
-  problemClarity: 'Problem clarity',
-  solutionFit: 'Solution fit',
-  marketSize: 'Market size',
-  tractionEvidence: 'Traction',
-  businessModel: 'Business model',
-  competitiveMoat: 'Competitive moat',
-  teamStrength: 'Team strength',
-  askClarity: 'Ask clarity',
-  narrativeFlow: 'Narrative flow',
-  investorReadiness: 'Investor readiness',
-};
+
+function AnimatedScore({ target }: { target: number }) {
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    const duration = 2000; // 2 seconds
+    const steps = 60;
+    const increment = target / steps;
+    const stepDuration = duration / steps;
+    
+    let current = 0;
+    const timer = setInterval(() => {
+      current += increment;
+      if (current >= target) {
+        setDisplay(target);
+        clearInterval(timer);
+      } else {
+        setDisplay(Math.round(current));
+      }
+    }, stepDuration);
+
+    return () => clearInterval(timer);
+  }, [target]);
+
+  return <span>{display}</span>;
+}
 
 export default function ReportPage() {
   const [isLight, setIsLight] = useState(false);
   const [analysis, setAnalysis] = useState<DeckAnalysisResult | null>(null);
   const [deckFileName, setDeckFileName] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (localStorage.getItem('deckiq-mode') === 'light') {
@@ -83,6 +100,15 @@ export default function ReportPage() {
     const light = document.body.classList.contains('light');
     localStorage.setItem('deckiq-mode', light ? 'light' : 'dark');
     setIsLight(light);
+  }
+
+  async function handleExportPDF() {
+    setExporting(true);
+    try {
+      window.print();
+    } finally {
+      setTimeout(() => setExporting(false), 1500);
+    }
   }
 
   // Derived display values
@@ -129,13 +155,17 @@ export default function ReportPage() {
                   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                 </svg>
               </button>
-              <button className="btn btn-outline btn-md" onClick={() => window.print()}>
+              <button
+                className="btn btn-outline btn-md"
+                onClick={handleExportPDF}
+                disabled={exporting}
+              >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="6 9 6 2 18 2 18 9" />
                   <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
                   <rect x="6" y="14" width="12" height="8" />
                 </svg>
-                Export PDF
+                {exporting ? 'Preparing PDF...' : 'Export PDF'}
               </button>
               <Link href="/upload" className="btn btn-primary btn-md">New analysis →</Link>
             </div>
@@ -155,7 +185,7 @@ export default function ReportPage() {
                   strokeDasharray="528" strokeDashoffset={ringOffset} strokeLinecap="round" />
               </svg>
               <div className="score-hero-center">
-                <span className="score-hero-num">{score}</span>
+                <span className="score-hero-num"><AnimatedScore target={score} /></span>
                 <span className="score-hero-tag">DeckIQ</span>
               </div>
             </div>
@@ -239,7 +269,7 @@ export default function ReportPage() {
                     <div key={key} className="cat-leg-item">
                       <span className="cat-leg-score" style={{ color }}>{pct}</span>
                       <div className="cat-leg-info">
-                        <div className="cat-leg-name">{RUBRIC_LABELS[key] ?? key}</div>
+                        <div className="cat-leg-name">{formatDimension(key)}</div>
                         <div className="cat-leg-desc">{rationale}</div>
                       </div>
                       <div className="cat-leg-bar">
@@ -256,6 +286,13 @@ export default function ReportPage() {
         </div>
       </section>
 
+      {/* EMOTIONAL JOURNEY */}
+      <section style={{ padding: 'var(--sp-3xl) 0', background: 'var(--surface-deep)' }}>
+        <div className="container">
+          <EmotionalJourneyChart slides={slides} />
+        </div>
+      </section>
+
       {/* ISSUES */}
       <div className="issues-section">
         <div className="container">
@@ -269,13 +306,13 @@ export default function ReportPage() {
                   <span className="issue-sev-badge sev-high" style={{ background: 'color-mix(in oklch,var(--danger) 12%,transparent)', color: 'var(--danger)' }}>
                     Critical #{fix.rank}
                   </span>
-                  <span className="issue-slide-tag">Slide {fix.slideToFix} · {RUBRIC_LABELS[fix.dimension] ?? fix.dimension}</span>
+                  <span className="issue-slide-tag">Slide {fix.slideToFix} · {formatDimension(fix.dimension)}</span>
                 </div>
                 <div className="issue-card-title">{fix.fix}</div>
                 <div className="issue-card-body">
                   Fixing this could improve your score by ~{fix.estimatedScoreImpact} points.
                 </div>
-                <Link href="/slide-review" className="issue-card-action">
+                <Link href={`/slide-review?slide=${fix.slideToFix}`} className="issue-card-action">
                   Fix this slide →
                 </Link>
               </div>
@@ -351,9 +388,12 @@ export default function ReportPage() {
             {fixes.map((fix, i) => (
               <div key={fix.rank} className="rec-card">
                 <div className="rec-step">{String(i + 1).padStart(2, '0')} — Do this first</div>
-                <div className="rec-title">{RUBRIC_LABELS[fix.dimension] ?? fix.dimension}: Slide {fix.slideToFix}</div>
-                <div className="rec-body">{fix.fix} Estimated score impact: +{fix.estimatedScoreImpact} points.</div>
-                <Link href="/slide-review" className="rec-link">
+                <div className="rec-title">{formatDimension(fix.dimension)}: Slide {fix.slideToFix}</div>
+                <div className="rec-body">{fix.fix}</div>
+                <p className="text-xs text-teal-400 font-medium mt-2">
+                  Estimated score impact: +{fix.estimatedScoreImpact} points
+                </p>
+                <Link href={`/slide-review?slide=${fix.slideToFix}`} className="rec-link">
                   See the rewrite suggestion →
                 </Link>
               </div>

@@ -105,7 +105,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         simplifiedContentSummary
       );
       
-      graniteScores = await callGraniteJSON(prompt);
+      graniteScores = await callGraniteJSON(prompt) as RubricScores;
       log.info('Granite scoring complete for rewritten slide', {
         slideNumber: body.slideNumber,
       });

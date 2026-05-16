@@ -242,7 +242,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           deckContentSummary
         );
         
-        const result = await callGraniteJSONWithRateLimit(prompt);
+        const result = await callGraniteJSONWithRateLimit(prompt) as RubricScores;
         graniteResults.push(result);
         consecutiveFailures = 0; // Reset on success
         

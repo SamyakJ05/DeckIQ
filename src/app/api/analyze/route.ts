@@ -20,7 +20,85 @@ import { parsePPTX } from '@/lib/parsers/pptx-parser';
 import { analyzeSlide } from '@/lib/ibm/nlu-client';
 import { log } from '@/lib/utils/logger';
 import { buildDeckMap, buildDeckContentSummary } from '@/lib/utils/deck-map-builder';
+import {
+  callGraniteJSON,
+  createNeutralRubricScores,
+  getTopCriticalFixes,
+  getInvestorSummary
+} from '@/lib/ibm/granite-client';
+import { buildRubricScoringPrompt } from '@/lib/ibm/prompts/rubric-prompt';
 
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Aggregate rubric scores across all slides
+ * Takes the average score for each dimension
+ */
+function aggregateRubricScores(slides: SlideAnalysis[]): RubricScores {
+  const dimensionKeys: (keyof RubricScores)[] = [
+    'problemClarity',
+    'solutionFit',
+    'marketSize',
+    'tractionEvidence',
+    'businessModel',
+    'competitiveMoat',
+    'teamStrength',
+    'askClarity',
+    'narrativeFlow',
+    'investorReadiness',
+  ];
+
+  const aggregated: any = {};
+
+  for (const dimension of dimensionKeys) {
+    // Calculate average score across all slides
+    const scores = slides.map(s => s.graniteScores[dimension].score);
+    const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    
+    // Collect all rationales
+    const rationales = slides
+      .map((s, i) => `Slide ${i + 1}: ${s.graniteScores[dimension].rationale}`)
+      .join(' | ');
+
+    aggregated[dimension] = {
+      score: Math.round(avgScore * 10) / 10, // Round to 1 decimal
+      rationale: `Avg across ${slides.length} slides: ${rationales.substring(0, 200)}...`,
+    };
+  }
+
+  return aggregated as RubricScores;
+}
+
+/**
+ * Calculate overall deck health score from aggregated rubric scores
+ * Uses weighted formula from PRD Section 6.4
+ */
+function calculateOverallScore(rubricScores: RubricScores): number {
+  const weights = {
+    problemClarity: 0.10,
+    solutionFit: 0.10,
+    marketSize: 0.10,
+    tractionEvidence: 0.20, // Highest weight
+    businessModel: 0.10,
+    competitiveMoat: 0.08,
+    teamStrength: 0.12, // Second highest
+    askClarity: 0.10,
+    narrativeFlow: 0.08,
+    investorReadiness: 0.02,
+  };
+
+  let weightedSum = 0;
+  for (const [dimension, weight] of Object.entries(weights)) {
+    const score = rubricScores[dimension as keyof RubricScores].score;
+    weightedSum += score * weight;
+  }
+
+  // Convert from 0-10 scale to 0-100 scale
+  return Math.round(weightedSum * 10);
+}
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -104,37 +182,117 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       successCount: nluResults.filter(r => r.keywords[0]?.text !== '[NLU unavailable]').length,
     });
 
-    // Build analysis result with real slide data and real NLU, but mock Granite
-    const perSlideAnalysis = slides.map((slide, index) =>
-      createSlideAnalysisWithRealNLU(
-        slide.slideNumber,
-        slide.estimatedSlideType,
-        slide.bodyText,
-        nluResults[index]
-      )
-    );
+    // Build temporary slide analysis objects with NLU data (no Granite scores yet)
+    const slidesWithNLU = slides.map((slide, index) => ({
+      slideNumber: slide.slideNumber,
+      slideType: slide.estimatedSlideType,
+      rawText: slide.bodyText,
+      nluResult: nluResults[index],
+    }));
 
     // Step 4: Build deck-level context (Deck Map and Content Summary)
     log.info('Building deck-level context');
-    const deckMap = buildDeckMap(perSlideAnalysis);
-    const deckContentSummary = buildDeckContentSummary(perSlideAnalysis);
+    const deckMap = buildDeckMap(slidesWithNLU.map(s => ({
+      ...s,
+      graniteScores: createMockRubricScores(), // Temporary for type compatibility
+      slideHealthScore: 0,
+    })));
+    const deckContentSummary = buildDeckContentSummary(slidesWithNLU.map(s => ({
+      ...s,
+      graniteScores: createMockRubricScores(), // Temporary for type compatibility
+      slideHealthScore: 0,
+    })));
 
     log.info('Deck context built', {
       deckMapLength: deckMap.length,
       contentSummaryLength: deckContentSummary.length,
     });
 
+    // Step 5: Run Granite rubric scoring for all slides in parallel
+    log.info('Starting Granite rubric scoring', { slideCount: slides.length });
+    
+    const graniteResults = await Promise.all(
+      slidesWithNLU.map(async (slide, index) => {
+        try {
+          const prompt = buildRubricScoringPrompt(
+            slide.rawText,
+            slide.slideType,
+            slide.slideNumber,
+            slidesWithNLU.length,
+            slide.nluResult,
+            deckMap,
+            deckContentSummary
+          );
+          
+          return await callGraniteJSON(prompt);
+        } catch (error) {
+          log.error('Granite scoring failed for slide', {
+            slideNumber: slide.slideNumber,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+          // Return neutral scores on failure instead of crashing
+          return createNeutralRubricScores('Granite API error');
+        }
+      })
+    );
+
+    log.info('Granite rubric scoring complete', {
+      slideCount: slides.length,
+      successCount: graniteResults.filter(r => !r.problemClarity.rationale.includes('Unable to score')).length,
+    });
+
+    // Step 6: Build final SlideAnalysis objects with real Granite scores
+    const perSlideAnalysis: SlideAnalysis[] = slidesWithNLU.map((slide, index) => {
+      const graniteScores = graniteResults[index];
+      
+      // Calculate slide health score as weighted average of relevant dimensions
+      const slideHealthScore = Math.round(
+        (graniteScores.problemClarity.score +
+          graniteScores.solutionFit.score +
+          graniteScores.narrativeFlow.score) / 3 * 10
+      );
+
+      return {
+        slideNumber: slide.slideNumber,
+        slideType: slide.slideType,
+        rawText: slide.rawText,
+        nluResult: slide.nluResult,
+        graniteScores,
+        slideHealthScore,
+      };
+    });
+
+    // Step 7: Aggregate rubric scores across all slides
+    log.info('Aggregating rubric scores');
+    const aggregatedRubricScores = aggregateRubricScores(perSlideAnalysis);
+    
+    // Calculate overall score from aggregated rubric
+    const overallScore = calculateOverallScore(aggregatedRubricScores);
+    const verdict = generateVerdict(slides.length);
+
+    // Step 8: Build full deck text for investor summary
+    const fullDeckText = slides.map(s => s.bodyText).join('\n\n');
+
+    // Step 9: Generate Critical Fixes and Investor Summary with Granite
+    log.info('Generating critical fixes and investor summary');
+    const [criticalFixes, investorSummary] = await Promise.all([
+      getTopCriticalFixes(aggregatedRubricScores, slides.length, overallScore),
+      getInvestorSummary(fullDeckText, deckMap),
+    ]);
+
+    log.info('Critical fixes and investor summary complete');
+
     // Parse content summary for debug output (first 2 entries)
     const parsedContentSummary = JSON.parse(deckContentSummary);
     const debugContentSummary = parsedContentSummary.slice(0, 2);
 
     const analysisResult: DeckAnalysisResult = {
-      overallScore: calculateMockOverallScore(slides.length),
-      verdict: generateVerdict(slides.length),
-      rubricBreakdown: createMockRubricScores(),
+      overallScore,
+      verdict,
+      rubricBreakdown: aggregatedRubricScores,
       perSlideAnalysis,
-      criticalFixes: generateMockCriticalFixes(slides.length),
-      investorSummary: generateMockInvestorSummary(slides.length),
+      criticalFixes,
+      investorSummary,
       emotionalJourney: generateMockEmotionalJourney(slides.length),
     };
 

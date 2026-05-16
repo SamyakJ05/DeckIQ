@@ -1,0 +1,413 @@
+{
+  "description": "Mock JSON response from POST /api/analyze",
+  "endpoint": "/api/analyze",
+  "method": "POST",
+  "response": {
+    "overallScore": 67,
+    "verdict": "Strong foundation, but your traction story needs work",
+    "rubricBreakdown": {
+      "problemClarity": {
+        "score": 8,
+        "rationale": "Problem is well-articulated with clear pain points"
+      },
+      "solutionFit": {
+        "score": 7,
+        "rationale": "Solution directly addresses the problem but needs more differentiation"
+      },
+      "marketSize": {
+        "score": 5,
+        "rationale": "Market size mentioned but lacks TAM/SAM/SOM breakdown"
+      },
+      "tractionEvidence": {
+        "score": 4,
+        "rationale": "Beta users mentioned but no revenue or growth metrics provided"
+      },
+      "businessModel": {
+        "score": 6,
+        "rationale": "Revenue model implied but not explicitly stated"
+      },
+      "competitiveMoat": {
+        "score": 6,
+        "rationale": "IBM technology integration provides some defensibility"
+      },
+      "teamStrength": {
+        "score": 5,
+        "rationale": "Team slide missing - cannot assess founder backgrounds"
+      },
+      "askClarity": {
+        "score": 5,
+        "rationale": "Funding need not specified with exact amount"
+      },
+      "narrativeFlow": {
+        "score": 7,
+        "rationale": "Logical progression from problem to solution to traction"
+      },
+      "investorReadiness": {
+        "score": 7,
+        "rationale": "Deck structure is sound but missing key slides (Team, Competition, Ask)"
+      }
+    },
+    "perSlideAnalysis": [
+      {
+        "slideNumber": 1,
+        "slideType": "Problem",
+        "rawText": "The current state of pitch deck feedback is broken. Founders send decks into silence with no actionable feedback.",
+        "nluResult": {
+          "sentiment": {
+            "label": "positive",
+            "score": 0.65
+          },
+          "tone": [
+            {
+              "label": "polite",
+              "score": 0.82
+            },
+            {
+              "label": "excited",
+              "score": 0.71
+            }
+          ],
+          "keywords": [
+            {
+              "text": "pitch deck",
+              "relevance": 0.95
+            },
+            {
+              "text": "feedback",
+              "relevance": 0.88
+            },
+            {
+              "text": "founders",
+              "relevance": 0.76
+            }
+          ],
+          "entities": [
+            {
+              "text": "IBM Watson",
+              "type": "Organization",
+              "relevance": 0.92
+            },
+            {
+              "text": "Granite AI",
+              "type": "Technology",
+              "relevance": 0.87
+            }
+          ],
+          "categories": [
+            {
+              "label": "/business and industrial/business operations/business plans",
+              "score": 0.89
+            }
+          ],
+          "emotion": {
+            "joy": 0.45,
+            "fear": 0.12,
+            "anger": 0.05,
+            "disgust": 0.03,
+            "sadness": 0.15
+          }
+        },
+        "graniteScores": {
+          "problemClarity": {
+            "score": 8,
+            "rationale": "Problem is well-articulated with clear pain points"
+          },
+          "solutionFit": {
+            "score": 7,
+            "rationale": "Solution directly addresses the problem but needs more differentiation"
+          },
+          "marketSize": {
+            "score": 5,
+            "rationale": "Market size mentioned but lacks TAM/SAM/SOM breakdown"
+          },
+          "tractionEvidence": {
+            "score": 4,
+            "rationale": "Beta users mentioned but no revenue or growth metrics provided"
+          },
+          "businessModel": {
+            "score": 6,
+            "rationale": "Revenue model implied but not explicitly stated"
+          },
+          "competitiveMoat": {
+            "score": 6,
+            "rationale": "IBM technology integration provides some defensibility"
+          },
+          "teamStrength": {
+            "score": 5,
+            "rationale": "Team slide missing - cannot assess founder backgrounds"
+          },
+          "askClarity": {
+            "score": 5,
+            "rationale": "Funding need not specified with exact amount"
+          },
+          "narrativeFlow": {
+            "score": 7,
+            "rationale": "Logical progression from problem to solution to traction"
+          },
+          "investorReadiness": {
+            "score": 7,
+            "rationale": "Deck structure is sound but missing key slides (Team, Competition, Ask)"
+          }
+        },
+        "slideHealthScore": 73
+      },
+      {
+        "slideNumber": 2,
+        "slideType": "Solution",
+        "rawText": "DeckIQ uses IBM Watson NLU and Granite AI to provide instant, investor-grade feedback on pitch decks.",
+        "nluResult": {
+          "sentiment": {
+            "label": "positive",
+            "score": 0.65
+          },
+          "tone": [
+            {
+              "label": "polite",
+              "score": 0.82
+            },
+            {
+              "label": "excited",
+              "score": 0.71
+            }
+          ],
+          "keywords": [
+            {
+              "text": "pitch deck",
+              "relevance": 0.95
+            },
+            {
+              "text": "feedback",
+              "relevance": 0.88
+            },
+            {
+              "text": "founders",
+              "relevance": 0.76
+            }
+          ],
+          "entities": [
+            {
+              "text": "IBM Watson",
+              "type": "Organization",
+              "relevance": 0.92
+            },
+            {
+              "text": "Granite AI",
+              "type": "Technology",
+              "relevance": 0.87
+            }
+          ],
+          "categories": [
+            {
+              "label": "/business and industrial/business operations/business plans",
+              "score": 0.89
+            }
+          ],
+          "emotion": {
+            "joy": 0.45,
+            "fear": 0.12,
+            "anger": 0.05,
+            "disgust": 0.03,
+            "sadness": 0.15
+          }
+        },
+        "graniteScores": {
+          "problemClarity": {
+            "score": 8,
+            "rationale": "Problem is well-articulated with clear pain points"
+          },
+          "solutionFit": {
+            "score": 7,
+            "rationale": "Solution directly addresses the problem but needs more differentiation"
+          },
+          "marketSize": {
+            "score": 5,
+            "rationale": "Market size mentioned but lacks TAM/SAM/SOM breakdown"
+          },
+          "tractionEvidence": {
+            "score": 4,
+            "rationale": "Beta users mentioned but no revenue or growth metrics provided"
+          },
+          "businessModel": {
+            "score": 6,
+            "rationale": "Revenue model implied but not explicitly stated"
+          },
+          "competitiveMoat": {
+            "score": 6,
+            "rationale": "IBM technology integration provides some defensibility"
+          },
+          "teamStrength": {
+            "score": 5,
+            "rationale": "Team slide missing - cannot assess founder backgrounds"
+          },
+          "askClarity": {
+            "score": 5,
+            "rationale": "Funding need not specified with exact amount"
+          },
+          "narrativeFlow": {
+            "score": 7,
+            "rationale": "Logical progression from problem to solution to traction"
+          },
+          "investorReadiness": {
+            "score": 7,
+            "rationale": "Deck structure is sound but missing key slides (Team, Competition, Ask)"
+          }
+        },
+        "slideHealthScore": 73
+      },
+      {
+        "slideNumber": 3,
+        "slideType": "Traction",
+        "rawText": "Currently in beta with 50 test users. Average deck score improvement: 18 points after applying fixes.",
+        "nluResult": {
+          "sentiment": {
+            "label": "positive",
+            "score": 0.65
+          },
+          "tone": [
+            {
+              "label": "polite",
+              "score": 0.82
+            },
+            {
+              "label": "excited",
+              "score": 0.71
+            }
+          ],
+          "keywords": [
+            {
+              "text": "pitch deck",
+              "relevance": 0.95
+            },
+            {
+              "text": "feedback",
+              "relevance": 0.88
+            },
+            {
+              "text": "founders",
+              "relevance": 0.76
+            }
+          ],
+          "entities": [
+            {
+              "text": "IBM Watson",
+              "type": "Organization",
+              "relevance": 0.92
+            },
+            {
+              "text": "Granite AI",
+              "type": "Technology",
+              "relevance": 0.87
+            }
+          ],
+          "categories": [
+            {
+              "label": "/business and industrial/business operations/business plans",
+              "score": 0.89
+            }
+          ],
+          "emotion": {
+            "joy": 0.45,
+            "fear": 0.12,
+            "anger": 0.05,
+            "disgust": 0.03,
+            "sadness": 0.15
+          }
+        },
+        "graniteScores": {
+          "problemClarity": {
+            "score": 8,
+            "rationale": "Problem is well-articulated with clear pain points"
+          },
+          "solutionFit": {
+            "score": 7,
+            "rationale": "Solution directly addresses the problem but needs more differentiation"
+          },
+          "marketSize": {
+            "score": 5,
+            "rationale": "Market size mentioned but lacks TAM/SAM/SOM breakdown"
+          },
+          "tractionEvidence": {
+            "score": 4,
+            "rationale": "Beta users mentioned but no revenue or growth metrics provided"
+          },
+          "businessModel": {
+            "score": 6,
+            "rationale": "Revenue model implied but not explicitly stated"
+          },
+          "competitiveMoat": {
+            "score": 6,
+            "rationale": "IBM technology integration provides some defensibility"
+          },
+          "teamStrength": {
+            "score": 5,
+            "rationale": "Team slide missing - cannot assess founder backgrounds"
+          },
+          "askClarity": {
+            "score": 5,
+            "rationale": "Funding need not specified with exact amount"
+          },
+          "narrativeFlow": {
+            "score": 7,
+            "rationale": "Logical progression from problem to solution to traction"
+          },
+          "investorReadiness": {
+            "score": 7,
+            "rationale": "Deck structure is sound but missing key slides (Team, Competition, Ask)"
+          }
+        },
+        "slideHealthScore": 73
+      }
+    ],
+    "criticalFixes": [
+      {
+        "rank": 1,
+        "dimension": "tractionEvidence",
+        "fix": "Add specific revenue numbers or user growth metrics with timeframes",
+        "estimatedScoreImpact": 12,
+        "slideToFix": 3
+      },
+      {
+        "rank": 2,
+        "dimension": "marketSize",
+        "fix": "Include TAM/SAM/SOM breakdown with data sources",
+        "estimatedScoreImpact": 8,
+        "slideToFix": 2
+      },
+      {
+        "rank": 3,
+        "dimension": "askClarity",
+        "fix": "Specify exact funding amount and use of funds breakdown",
+        "estimatedScoreImpact": 6,
+        "slideToFix": 3
+      }
+    ],
+    "investorSummary": "The problem is compelling and the solution is technically sound. However, I need to see concrete traction metrics before I can assess product-market fit. The team background is missing, which raises questions about execution capability.",
+    "emotionalJourney": [
+      {
+        "slideIndex": 1,
+        "sentiment": -0.3,
+        "intensity": 0.6,
+        "toneFlags": [
+          "frustrated"
+        ]
+      },
+      {
+        "slideIndex": 2,
+        "sentiment": 0.5,
+        "intensity": 0.8,
+        "toneFlags": [
+          "excited",
+          "polite"
+        ]
+      },
+      {
+        "slideIndex": 3,
+        "sentiment": 0.2,
+        "intensity": 0.5,
+        "toneFlags": [
+          "satisfied"
+        ]
+      }
+    ]
+  }
+}

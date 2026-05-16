@@ -19,6 +19,18 @@ const MAX_OCR_PAGES = 10;
 const MIN_OCR_TEXT_LENGTH = 20;
 
 /**
+ * Clean extracted text to fix letter-spaced garbled text
+ * e.g., "C O N F I D E N T I A L" → "CONFIDENTIAL"
+ */
+function cleanExtractedText(raw: string): string {
+  return raw
+    .replace(/\b(\w) (?=\w )/g, '$1')  // collapse spaced chars mid-word
+    .replace(/\b(\w) (\w)\b/g, '$1$2') // collapse two trailing spaced chars
+    .replace(/  +/g, ' ')              // normalize extra spaces
+    .trim();
+}
+
+/**
  * Parse a PDF buffer and extract slide content with OCR fallback
  * @param buffer - PDF file buffer
  * @returns Array of SlideContent objects, one per page
@@ -61,7 +73,9 @@ export async function parsePDF(buffer: Buffer): Promise<SlideContent[]> {
 
           if (trimmed.length >= MIN_OCR_TEXT_LENGTH) {
             log.info(`OCR successful for page ${pageNumber}, extracted ${trimmed.length} characters`);
-            enhancedPagesText.push({ text: trimmed, usedOcr: true });
+            // Clean OCR text as well
+            const cleanedOcrText = cleanExtractedText(trimmed);
+            enhancedPagesText.push({ text: cleanedOcrText, usedOcr: true });
             ocrPagesCount++;
           } else {
             log.warn(`OCR produced insufficient text for page ${pageNumber} (${trimmed.length} chars), using original`);
@@ -73,7 +87,9 @@ export async function parsePDF(buffer: Buffer): Promise<SlideContent[]> {
         }
       } else {
         // Page has sufficient text, no OCR needed
-        enhancedPagesText.push({ text: pageText, usedOcr: false });
+        // Clean the text to fix letter-spacing issues
+        const cleanedText = cleanExtractedText(pageText);
+        enhancedPagesText.push({ text: cleanedText, usedOcr: false });
       }
     }
     

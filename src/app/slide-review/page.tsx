@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import type { DeckAnalysisResult, SlideAnalysis, SlideType } from '@/types';
+import { formatDimension } from '@/lib/formatters';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -104,7 +106,7 @@ function buildSignals(slide: SlideAnalysis): { nm: string; s: 'pass' | 'fail' | 
   const scoreEntries = Object.entries(slide.graniteScores) as [string, { score: number; rationale: string }][];
   const lowest = scoreEntries.sort((a, b) => a[1].score - b[1].score)[0];
   if (lowest && lowest[1].score < 5) {
-    sigs.push({ nm: `Weak area: ${lowest[0]}`, s: 'fail' });
+    sigs.push({ nm: `Weak area: ${formatDimension(lowest[0])}`, s: 'fail' });
   }
 
   if (slide.slideHealthScore >= 70) sigs.push({ nm: 'Slide health: strong', s: 'pass' });
@@ -125,6 +127,8 @@ export default function SlideReviewPage() {
   const [rewrites, setRewrites] = useState<Record<number, string>>({});
   const [rewriteLoading, setRewriteLoading] = useState<Record<number, boolean>>({});
 
+  const searchParams = useSearchParams();
+
   useEffect(() => {
     const stored = localStorage.getItem('deckiq-mode');
     if (stored === 'light') setIsLight(true);
@@ -133,7 +137,17 @@ export default function SlideReviewPage() {
       try { setAnalysis(JSON.parse(raw)); } catch { /* corrupt */ }
     }
     setDeckFileName(sessionStorage.getItem('deckiq-filename') ?? '');
-  }, []);
+
+    // Read slide query parameter and set initial slide
+    const slideParam = searchParams.get('slide');
+    if (slideParam) {
+      const slideNum = parseInt(slideParam, 10);
+      if (!isNaN(slideNum) && slideNum > 0) {
+        // slideToFix is 1-based, currentSlide is 0-based
+        setCurrentSlide(slideNum - 1);
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     document.body.classList.toggle('light', isLight);
@@ -198,6 +212,46 @@ export default function SlideReviewPage() {
     }
   }
 
+  async function handleApplyAndRescore(slideIdx: number) {
+    if (!slide || !rewrites[slideIdx]) return;
+    
+    try {
+      const res = await fetch('/api/rescore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slideText: rewrites[slideIdx],
+          slideIndex: slideIdx,
+        }),
+      });
+      
+      if (res.ok) {
+        const data = await res.json() as { slideHealthScore: number; graniteScores: any };
+        
+        // Update the slide in analysis state
+        if (analysis) {
+          const updatedSlides = [...analysis.perSlideAnalysis];
+          updatedSlides[slideIdx] = {
+            ...updatedSlides[slideIdx],
+            slideHealthScore: data.slideHealthScore,
+            graniteScores: data.graniteScores,
+            rawText: rewrites[slideIdx], // Update with new text
+          };
+          
+          const updatedAnalysis = {
+            ...analysis,
+            perSlideAnalysis: updatedSlides,
+          };
+          
+          setAnalysis(updatedAnalysis);
+          sessionStorage.setItem('deckiq-analysis', JSON.stringify(updatedAnalysis));
+        }
+      }
+    } catch (err) {
+      console.error('Rescore failed:', err);
+    }
+  }
+
   const CIRCUMFERENCE = 138;
 
   if (!analysis || totalSlides === 0) {
@@ -224,7 +278,7 @@ export default function SlideReviewPage() {
     : '';
 
   const matchingFix = analysis.criticalFixes.find((f) => f.slideToFix === slide?.slideNumber);
-  const suggestion = matchingFix?.fix ?? (bottomDim ? `Improve ${bottomDim[0]}: ${bottomDim[1].rationale}` : 'No specific suggestion.');
+  const suggestion = matchingFix?.fix ?? (bottomDim ? `Improve ${formatDimension(bottomDim[0])}: ${bottomDim[1].rationale}` : 'No specific suggestion.');
 
   const signals = slide ? buildSignals(slide) : [];
 
@@ -345,7 +399,11 @@ export default function SlideReviewPage() {
                 {slide?.slideType ?? '—'}
               </div>
               <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Slide {slide ? String(slide.slideNumber).padStart(2, '0') : '—'} · Score {slide?.slideHealthScore ?? '—'}
+                Slide {slide ? String(slide.slideNumber).padStart(2, '0') : '—'} · Score {
+                  slide && slide.slideHealthScore === 0 && ['Title', 'Other'].includes(slide.slideType)
+                    ? '—'
+                    : slide?.slideHealthScore ?? '—'
+                }
                 {slide?.usedOcr && (
                   <span style={{
                     fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 600,
@@ -371,12 +429,25 @@ export default function SlideReviewPage() {
                 />
               </svg>
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>
-                  {slide?.slideHealthScore ?? '—'}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '7px', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  score
-                </span>
+                {slide && slide.slideHealthScore === 0 && ['Title', 'Other'].includes(slide.slideType) ? (
+                  <>
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 800, color: 'var(--muted)', lineHeight: 1 }}>
+                      —
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '7px', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      N/A
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>
+                      {slide?.slideHealthScore ?? '—'}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '7px', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      score
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -431,7 +502,25 @@ export default function SlideReviewPage() {
                   <div className="rtab active">AI-generated rewrite</div>
                 </div>
                 {rewrites[currentSlide] ? (
-                  <div className="rewrite-content">{rewrites[currentSlide]}</div>
+                  <>
+                    <div className="rewrite-content">{rewrites[currentSlide]}</div>
+                    <div style={{ display: 'flex', gap: 'var(--sp-md)', marginTop: 'var(--sp-md)' }}>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(rewrites[currentSlide])}
+                        className="btn btn-outline btn-md"
+                        style={{ flex: 1 }}
+                      >
+                        Copy to clipboard
+                      </button>
+                      <button
+                        onClick={() => handleApplyAndRescore(currentSlide)}
+                        className="btn btn-primary btn-md"
+                        style={{ flex: 1 }}
+                      >
+                        Apply & Rescore →
+                      </button>
+                    </div>
+                  </>
                 ) : rewriteLoading[currentSlide] ? (
                   <div style={{ padding: 'var(--sp-lg)', color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
                     Generating rewrite…

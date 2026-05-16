@@ -575,7 +575,7 @@ html, body { height: 100%; }
 .rewrite-tabs { display: flex; background: #000; border-bottom: 1px solid var(--hairline); }
 .rtab { font-family: var(--font-mono); font-size: 11px; color: rgba(255,255,255,0.4); padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
 .rtab.active { color: var(--on-dark); border-bottom-color: var(--primary); }
-.rewrite-content { padding: var(--sp-lg); font-family: var(--font-mono); font-size: 12px; color: var(--on-dark-mute); line-height: 1.7; white-space: pre-wrap; }
+.rewrite-content { padding: var(--sp-lg); font-family: var(--font-sans); font-size: 14px; color: var(--on-dark-mute); line-height: 1.7; white-space: pre-wrap; }
 .rewrite-content em { color: var(--primary); font-style: normal; }
 .review-footer { height: 80px; border-top: 1px solid var(--hairline); background: var(--surface); display: flex; align-items: center; padding: 0 var(--sp-xxl); gap: var(--sp-lg); }
 .review-footer-slides { display: flex; gap: 4px; overflow-x: auto; flex: 1; }

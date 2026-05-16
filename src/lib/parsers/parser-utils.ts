@@ -37,110 +37,59 @@ export function hasContent(text: string): boolean {
 /**
  * Heuristic slide type classifier based on keyword matching
  * Implements the classification logic from DeckIQ_PRD_v2.md Section 6.5
+ * Requires minimum 2 keyword matches to classify a slide type
  */
 export function classifySlideType(text: string, slideNumber: number): SlideType {
   const lowerText = text.toLowerCase();
+  const MIN_KEYWORD_HITS = 2;
 
   // First slide is typically Title
   if (slideNumber === 1) {
     return 'Title';
   }
 
-  // Problem slide keywords
-  if (
-    lowerText.includes('problem') ||
-    lowerText.includes('pain') ||
-    lowerText.includes('challenge') ||
-    lowerText.includes('struggle') ||
-    lowerText.includes('currently') ||
-    lowerText.includes('today')
-  ) {
-    return 'Problem';
+  // Define keyword sets for each type
+  const keywords: Record<SlideType, string[]> = {
+    Title: [],
+    Problem: ['problem', 'pain', 'challenge', 'struggle', 'currently', 'today'],
+    Solution: ['solution', 'we built', 'our product', 'introducing', 'platform'],
+    Market: ['market', 'tam', 'sam', 'som', 'billion', 'opportunity', 'addressable'],
+    Traction: ['mrr', 'arr', 'users', 'growth', 'customers', 'revenue', 'retention'],
+    BusinessModel: ['pricing', 'revenue model', 'subscription', 'per seat', 'freemium'],
+    Team: ['founder', 'ceo', 'cto', 'previously', 'experience', 'background'],
+    Competition: ['competitor', ' vs ', 'alternative', 'landscape', 'differentiated'],
+    Ask: ['raising', 'seeking', 'use of funds', 'milestone', 'runway'],
+    Other: [],
+  };
+
+  // Count keyword matches for each type
+  const scores: Record<SlideType, number> = {
+    Title: 0,
+    Problem: 0,
+    Solution: 0,
+    Market: 0,
+    Traction: 0,
+    BusinessModel: 0,
+    Team: 0,
+    Competition: 0,
+    Ask: 0,
+    Other: 0,
+  };
+
+  for (const [type, keywordList] of Object.entries(keywords)) {
+    for (const keyword of keywordList) {
+      if (lowerText.includes(keyword)) {
+        scores[type as SlideType]++;
+      }
+    }
   }
 
-  // Solution slide keywords
-  if (
-    lowerText.includes('solution') ||
-    lowerText.includes('we built') ||
-    lowerText.includes('our product') ||
-    lowerText.includes('introducing') ||
-    lowerText.includes('platform')
-  ) {
-    return 'Solution';
-  }
+  // Find the type with the highest score
+  const entries = Object.entries(scores) as [SlideType, number][];
+  const best = entries.sort((a, b) => b[1] - a[1])[0];
 
-  // Market slide keywords
-  if (
-    lowerText.includes('market') ||
-    lowerText.includes('tam') ||
-    lowerText.includes('sam') ||
-    lowerText.includes('som') ||
-    lowerText.includes('billion') ||
-    lowerText.includes('opportunity') ||
-    lowerText.includes('addressable')
-  ) {
-    return 'Market';
-  }
-
-  // Traction slide keywords
-  if (
-    lowerText.includes('mrr') ||
-    lowerText.includes('arr') ||
-    lowerText.includes('users') ||
-    lowerText.includes('growth') ||
-    lowerText.includes('customers') ||
-    lowerText.includes('revenue') ||
-    lowerText.includes('retention')
-  ) {
-    return 'Traction';
-  }
-
-  // Business Model slide keywords
-  if (
-    lowerText.includes('pricing') ||
-    lowerText.includes('revenue model') ||
-    lowerText.includes('subscription') ||
-    lowerText.includes('per seat') ||
-    lowerText.includes('freemium')
-  ) {
-    return 'BusinessModel';
-  }
-
-  // Team slide keywords
-  if (
-    lowerText.includes('founder') ||
-    lowerText.includes('ceo') ||
-    lowerText.includes('cto') ||
-    lowerText.includes('previously') ||
-    lowerText.includes('experience') ||
-    lowerText.includes('background')
-  ) {
-    return 'Team';
-  }
-
-  // Competition slide keywords
-  if (
-    lowerText.includes('competitor') ||
-    lowerText.includes(' vs ') ||
-    lowerText.includes('alternative') ||
-    lowerText.includes('landscape') ||
-    lowerText.includes('differentiated')
-  ) {
-    return 'Competition';
-  }
-
-  // Ask slide keywords
-  if (
-    lowerText.includes('raising') ||
-    lowerText.includes('seeking') ||
-    lowerText.includes('use of funds') ||
-    lowerText.includes('milestone') ||
-    lowerText.includes('runway')
-  ) {
-    return 'Ask';
-  }
-
-  return 'Other';
+  // Only classify if we have at least MIN_KEYWORD_HITS matches
+  return best[1] >= MIN_KEYWORD_HITS ? best[0] : 'Other';
 }
 
 /**

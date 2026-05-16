@@ -1,6 +1,7 @@
 /**
  * IBM watsonx.ai Granite Client
- * Handles JSON generation from Granite models with retry logic
+ * Primary: ibm/granite-4-h-small via chat completions endpoint (~3-5s/call)
+ * Fallback: ibm/granite-3-8b-instruct via text generation endpoint
  */
 
 import { log } from '@/lib/utils/logger';
@@ -11,11 +12,16 @@ import { buildInvestorSummaryPrompt } from './prompts/investor-prompt';
 const WATSONX_API_KEY = process.env.WATSONX_API_KEY;
 const WATSONX_PROJECT_ID = process.env.WATSONX_PROJECT_ID;
 const WATSONX_URL = process.env.WATSONX_URL;
-const PRIMARY_MODEL = 'ibm/granite-3-8b-instruct';
-const FALLBACK_MODEL = process.env.GRANITE_FALLBACK_MODEL || 'ibm/granite-3-8b-instruct';
 
-const MAX_JSON_RETRIES = 3;
-const GENERATION_TIMEOUT_MS = 30000; // 30 seconds
+// granite-4-h-small: chat endpoint, ~3-5s per call
+const PRIMARY_MODEL = 'ibm/granite-4-h-small';
+// granite-3-8b-instruct: text generation endpoint, fallback only
+const FALLBACK_MODEL = 'ibm/granite-3-8b-instruct';
+
+const MAX_JSON_RETRIES = 2;
+const CHAT_TIMEOUT_MS = 15000;       // granite-4-h-small responds in ~3-5s
+const TEXT_GEN_TIMEOUT_MS = 60000;   // granite-3-8b-instruct can take ~120s; 60s still useful as a gate
+const RATE_LIMIT_DELAY_MS = 200;     // 200ms between calls for granite-4 (much faster model)
 
 // IAM token cache — IBM Cloud tokens expire in 1 hour, refresh 5 min early
 let iamTokenCache: { token: string; expiresAt: number } | null = null;
@@ -42,255 +48,283 @@ async function getIAMToken(): Promise<string> {
   const data = await response.json() as { access_token: string; expires_in: number };
   iamTokenCache = {
     token: data.access_token,
-    // refresh 5 minutes before actual expiry
     expiresAt: now + (data.expires_in - 300) * 1000,
   };
   return iamTokenCache.token;
 }
 
-interface GraniteGenerationParams {
-  model_id: string;
-  input: string;
-  parameters: {
-    decoding_method: string;
-    max_new_tokens: number;
-    temperature: number;
-    top_p?: number;
-    top_k?: number;
-  };
-  project_id: string;
+// ─── Chat completions response (Granite 4 / OpenAI-compatible) ───────────────
+interface ChatResponse {
+  choices: Array<{ message: { content: string } }>;
+  usage: { prompt_tokens: number; completion_tokens: number };
 }
 
-interface GraniteResponse {
+// ─── Text generation response (Granite 3 fallback) ───────────────────────────
+interface TextGenResponse {
   results: Array<{
     generated_text: string;
     generated_token_count: number;
     input_token_count: number;
   }>;
-  model_id: string;
-  created_at: string;
 }
 
 /**
- * Call Granite model and parse JSON response with retry logic
- * @param prompt - The prompt to send to Granite
- * @param useFallback - Whether to use fallback model (internal use)
- * @returns Parsed JSON object
+ * Call Granite 4 via chat completions endpoint.
+ * Returns raw generated text; caller handles JSON parsing.
+ * @param forceJSON - Set true to add response_format: json_object (prevents truncation)
+ */
+async function callGraniteChatAPI(
+  systemPrompt: string,
+  userPrompt: string,
+  forceJSON: boolean = false,
+): Promise<string> {
+  const iamToken = await getIAMToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+  const response = await fetch(`${WATSONX_URL}/ml/v1/text/chat?version=2023-05-29`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${iamToken}`,
+    },
+    body: JSON.stringify({
+      model_id: PRIMARY_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 2048,
+      temperature: 0.1,
+      ...(forceJSON ? { response_format: { type: 'json_object' } } : {}),
+      project_id: WATSONX_PROJECT_ID,
+    }),
+    signal: controller.signal,
+  });
+
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Granite 4 chat error: ${response.status} ${err.substring(0, 200)}`);
+  }
+
+  const data: ChatResponse = await response.json();
+  const text = data.choices[0]?.message?.content;
+  if (!text) throw new Error('No content in Granite 4 chat response');
+
+  log.info('Granite 4 chat complete', {
+    promptTokens: data.usage?.prompt_tokens,
+    completionTokens: data.usage?.completion_tokens,
+  });
+
+  return text;
+}
+
+/**
+ * Fallback: call Granite 3 8B via text generation endpoint.
+ * Only used when the primary model fails.
+ */
+async function callGraniteTextGenAPI(prompt: string, maxTokens: number = 512): Promise<string> {
+  const iamToken = await getIAMToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TEXT_GEN_TIMEOUT_MS);
+
+  const response = await fetch(`${WATSONX_URL}/ml/v1/text/generation?version=2023-05-29`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${iamToken}`,
+    },
+    body: JSON.stringify({
+      model_id: FALLBACK_MODEL,
+      input: prompt,
+      parameters: {
+        decoding_method: 'greedy',
+        max_new_tokens: maxTokens,
+        temperature: 0.1,
+        top_p: 0.95,
+        top_k: 50,
+      },
+      project_id: WATSONX_PROJECT_ID,
+    }),
+    signal: controller.signal,
+  });
+
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Granite 3 text gen error: ${response.status} ${err.substring(0, 200)}`);
+  }
+
+  const data: TextGenResponse = await response.json();
+  const text = data.results[0]?.generated_text;
+  if (!text) throw new Error('No generated text in Granite 3 response');
+  return text;
+}
+
+/**
+ * Extract first complete JSON object or array from text.
+ * Uses depth tracking instead of greedy regex so trailing prose with {} chars
+ * doesn't get included in the extracted JSON.
+ */
+function extractJSON(text: string): string {
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+
+  const open = cleaned.indexOf('{') !== -1 ? cleaned.indexOf('{') : cleaned.indexOf('[');
+  if (open === -1) return cleaned;
+
+  const openChar = cleaned[open];
+  const closeChar = openChar === '{' ? '}' : ']';
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = open; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === openChar) depth++;
+    if (ch === closeChar) {
+      depth--;
+      if (depth === 0) return cleaned.substring(open, i + 1);
+    }
+  }
+  return cleaned.substring(open);
+}
+
+/**
+ * Call Granite and parse JSON response with retry logic.
+ * Primary: Granite 4 h-small chat endpoint.
+ * Fallback: Granite 3 8B text generation endpoint.
  */
 export async function callGraniteJSON(
   prompt: string,
-  useFallback: boolean = false
-): Promise<any> {
+  _useFallback: boolean = false,
+): Promise<unknown> {
   if (!WATSONX_API_KEY || !WATSONX_PROJECT_ID || !WATSONX_URL) {
     throw new Error('Missing watsonx.ai credentials in environment variables');
   }
 
-  const modelId = useFallback ? FALLBACK_MODEL : PRIMARY_MODEL;
-  
-  log.info('Calling Granite model', { 
-    model: modelId, 
-    promptLength: prompt.length,
-    isFallback: useFallback 
-  });
+  log.info('Calling Granite JSON', { promptLength: prompt.length });
 
-  const requestBody: GraniteGenerationParams = {
-    model_id: modelId,
-    input: prompt,
-    parameters: {
-      decoding_method: 'greedy',
-      max_new_tokens: 1500,
-      temperature: 0.1, // Low temperature for structured JSON output
-      top_p: 0.95,
-      top_k: 50,
-    },
-    project_id: WATSONX_PROJECT_ID,
-  };
+  for (let attempt = 1; attempt <= MAX_JSON_RETRIES; attempt++) {
+    let rawText: string;
 
-  try {
-    const iamToken = await getIAMToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
+    try {
+      // Primary: Granite 4 chat endpoint with forced JSON mode
+      rawText = await callGraniteChatAPI(
+        'You are a VC analyst. Return ONLY valid JSON, no other text.',
+        prompt,
+        true,
+      );
+    } catch (primaryErr) {
+      log.warn('Granite 4 chat failed, trying fallback', {
+        error: primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+        attempt,
+      });
+      try {
+        rawText = await callGraniteTextGenAPI(prompt, 512);
+      } catch (fallbackErr) {
+        log.error('Both Granite models failed', {
+          fallbackError: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+        });
+        throw fallbackErr;
+      }
+    }
 
-    const response = await fetch(`${WATSONX_URL}/ml/v1/text/generation?version=2023-05-29`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${iamToken}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      log.error('Granite API error', {
-        status: response.status, 
-        statusText: response.statusText,
-        error: errorText 
+    try {
+      const jsonText = extractJSON(rawText);
+      const parsed = JSON.parse(jsonText);
+      log.info('Granite JSON parsed successfully', { attempt });
+      return parsed;
+    } catch (parseErr) {
+      log.warn('JSON parse failed', {
+        attempt,
+        error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        preview: rawText.substring(0, 150),
       });
 
-      // If primary model fails with rate limit or quota, try fallback
-      if (!useFallback && (response.status === 429 || response.status === 503)) {
-        log.warn('Primary model rate limited, trying fallback model');
-        return callGraniteJSON(prompt, true);
+      if (attempt >= MAX_JSON_RETRIES) {
+        log.error('Max JSON retry attempts reached', { attempts: MAX_JSON_RETRIES });
+        throw new Error(`Failed to parse valid JSON after ${MAX_JSON_RETRIES} attempts`);
       }
-
-      throw new Error(`Granite API error: ${response.status} ${response.statusText}`);
+      // retry with stricter instruction added to prompt
     }
-
-    const data: GraniteResponse = await response.json();
-    const generatedText = data.results[0]?.generated_text;
-
-    if (!generatedText) {
-      throw new Error('No generated text in Granite response');
-    }
-
-    log.info('Granite generation complete', {
-      model: modelId,
-      inputTokens: data.results[0].input_token_count,
-      outputTokens: data.results[0].generated_token_count,
-    });
-
-    // Attempt to parse JSON with retry logic
-    return await parseJSONWithRetry(generatedText, prompt, useFallback);
-
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      log.error('Granite request timeout', { model: modelId });
-      throw new Error('Granite request timed out after 30 seconds');
-    }
-
-    log.error('Granite call failed', { 
-      model: modelId, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    });
-    throw error;
   }
+
+  throw new Error('Granite JSON call exhausted all attempts');
 }
 
 /**
- * Parse JSON from Granite response with retry logic
- * If parsing fails, retry with stricter prompt up to MAX_JSON_RETRIES times
+ * Sleep utility for rate limiting.
  */
-async function parseJSONWithRetry(
-  generatedText: string,
-  originalPrompt: string,
-  useFallback: boolean,
-  attempt: number = 1
-): Promise<any> {
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Call Granite JSON with rate limiting delay.
+ */
+export async function callGraniteJSONWithRateLimit(
+  prompt: string,
+  useFallback: boolean = false,
+): Promise<unknown> {
+  await sleep(RATE_LIMIT_DELAY_MS);
+  return callGraniteJSON(prompt, useFallback);
+}
+
+/**
+ * Call Granite for plain text response (investor summary, slide rewrites).
+ */
+export async function callGraniteText(prompt: string): Promise<string> {
+  if (!WATSONX_API_KEY || !WATSONX_PROJECT_ID || !WATSONX_URL) {
+    throw new Error('Missing watsonx.ai credentials in environment variables');
+  }
+
+  log.info('Calling Granite for text generation');
+
   try {
-    // Strip markdown code fences (```json ... ``` or ``` ... ```)
-    let cleaned = generatedText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-    // Extract first JSON object or array
-    const jsonMatch = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    const jsonText = jsonMatch ? jsonMatch[0] : cleaned;
-
-    const parsed = JSON.parse(jsonText);
-    log.info('JSON parsed successfully', { attempt });
-    return parsed;
-
-  } catch (error) {
-    log.warn('JSON parse failed', { 
-      attempt, 
-      error: error instanceof Error ? error.message : 'Unknown error',
-      textPreview: generatedText.substring(0, 200)
+    return await callGraniteChatAPI(
+      'You are a venture capital investor. Write clear, direct prose.',
+      prompt,
+    );
+  } catch (err) {
+    log.warn('Granite 4 text generation failed, trying fallback', {
+      error: err instanceof Error ? err.message : String(err),
     });
-
-    if (attempt >= MAX_JSON_RETRIES) {
-      log.error('Max JSON retry attempts reached', { attempts: MAX_JSON_RETRIES });
-      throw new Error(`Failed to parse valid JSON after ${MAX_JSON_RETRIES} attempts`);
-    }
-
-    // Retry with stricter prompt
-    const stricterPrompt = `${originalPrompt}
-
-CRITICAL: Your previous response was not valid JSON. Return ONLY valid JSON that exactly matches the schema. Do not include any explanatory text before or after the JSON object.`;
-
-    log.info('Retrying with stricter prompt', { attempt: attempt + 1 });
-    
-    const modelId = useFallback ? FALLBACK_MODEL : PRIMARY_MODEL;
-    const requestBody: GraniteGenerationParams = {
-      model_id: modelId,
-      input: stricterPrompt,
-      parameters: {
-        decoding_method: 'greedy',
-        max_new_tokens: 1500,
-        temperature: 0.05, // Even lower temperature for retry
-        top_p: 0.9,
-        top_k: 30,
-      },
-      project_id: WATSONX_PROJECT_ID!,
-    };
-
-    const iamToken = await getIAMToken();
-    const response = await fetch(`${WATSONX_URL}/ml/v1/text/generation?version=2023-05-29`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${iamToken}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Granite retry failed: ${response.status}`);
-    }
-
-    const data: GraniteResponse = await response.json();
-    const retryText = data.results[0]?.generated_text;
-
-    if (!retryText) {
-      throw new Error('No generated text in retry response');
-    }
-
-    // Recursive retry
-    return parseJSONWithRetry(retryText, originalPrompt, useFallback, attempt + 1);
+    return callGraniteTextGenAPI(prompt, 500);
   }
 }
 
 /**
- * Create a neutral fallback RubricScores object when Granite fails
- */
-
-/**
- * Get top 3 critical fixes from Granite based on aggregated rubric scores
- * @param aggregatedRubricScores - Aggregated rubric scores across all slides
- * @param slideCount - Total number of slides
- * @param overallScore - Overall deck health score (0-100)
- * @returns Array of 3 CriticalFix objects
+ * Get top 3 critical fixes from Granite based on aggregated rubric scores.
  */
 export async function getTopCriticalFixes(
   aggregatedRubricScores: RubricScores,
   slideCount: number,
-  overallScore: number
+  overallScore: number,
 ): Promise<CriticalFix[]> {
   try {
     log.info('Generating critical fixes with Granite');
-    
-    const prompt = buildCriticalFixesPrompt(
-      aggregatedRubricScores,
-      slideCount,
-      overallScore
-    );
-    
+    const prompt = buildCriticalFixesPrompt(aggregatedRubricScores, slideCount, overallScore);
     const result = await callGraniteJSON(prompt);
-    
-    // Validate result is an array of 3 fixes
+
     if (!Array.isArray(result) || result.length !== 3) {
-      log.warn('Granite returned invalid fixes array', { 
-        isArray: Array.isArray(result), 
-        length: Array.isArray(result) ? result.length : 0 
+      log.warn('Granite returned invalid fixes array', {
+        isArray: Array.isArray(result),
+        length: Array.isArray(result) ? result.length : 0,
       });
       return createFallbackCriticalFixes(slideCount);
     }
-    
+
     log.info('Critical fixes generated successfully');
     return result as CriticalFix[];
-    
   } catch (error) {
     log.error('Failed to generate critical fixes', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -300,31 +334,18 @@ export async function getTopCriticalFixes(
 }
 
 /**
- * Get investor perspective summary from Granite
- * @param fullDeckText - Concatenated text from all slides
- * @param deckMap - Linear deck structure map
- * @returns 3-sentence investor perspective summary
+ * Get investor perspective summary from Granite.
  */
 export async function getInvestorSummary(
   fullDeckText: string,
-  deckMap: DeckMap
+  deckMap: DeckMap,
 ): Promise<string> {
   try {
-    log.info('Generating investor summary with Granite', {
-      deckTextLength: fullDeckText.length,
-    });
-    
+    log.info('Generating investor summary with Granite', { deckTextLength: fullDeckText.length });
     const prompt = buildInvestorSummaryPrompt(fullDeckText, deckMap);
-    
-    // For investor summary, we expect plain text, not JSON
     const response = await callGraniteText(prompt);
-    
-    log.info('Investor summary generated successfully', {
-      summaryLength: response.length,
-    });
-    
+    log.info('Investor summary generated successfully', { summaryLength: response.length });
     return response;
-    
   } catch (error) {
     log.error('Failed to generate investor summary', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -334,72 +355,24 @@ export async function getInvestorSummary(
 }
 
 /**
- * Call Granite for plain text response (not JSON)
- * Used for investor summary and slide rewrites which return prose, not structured data
+ * Create neutral fallback RubricScores when Granite fails.
  */
-export async function callGraniteText(prompt: string): Promise<string> {
-  if (!WATSONX_API_KEY || !WATSONX_PROJECT_ID || !WATSONX_URL) {
-    throw new Error('Missing watsonx.ai credentials in environment variables');
-  }
-
-  log.info('Calling Granite for text generation');
-
-  const requestBody: GraniteGenerationParams = {
-    model_id: PRIMARY_MODEL,
-    input: prompt,
-    parameters: {
-      decoding_method: 'greedy',
-      max_new_tokens: 500, // Shorter for 3-sentence summary
-      temperature: 0.3, // Slightly higher for more natural prose
-      top_p: 0.95,
-      top_k: 50,
-    },
-    project_id: WATSONX_PROJECT_ID,
+export function createNeutralRubricScores(reason: string): RubricScores {
+  const entry = (r: string) => ({ score: 5, rationale: `Unable to score: ${r}` });
+  return {
+    problemClarity: entry(reason),
+    solutionFit: entry(reason),
+    marketSize: entry(reason),
+    tractionEvidence: entry(reason),
+    businessModel: entry(reason),
+    competitiveMoat: entry(reason),
+    teamStrength: entry(reason),
+    askClarity: entry(reason),
+    narrativeFlow: entry(reason),
+    investorReadiness: entry(reason),
   };
-
-  try {
-    const iamToken = await getIAMToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
-
-    const response = await fetch(`${WATSONX_URL}/ml/v1/text/generation?version=2023-05-29`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${iamToken}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Granite API error: ${response.status}`);
-    }
-
-    const data: GraniteResponse = await response.json();
-    const generatedText = data.results[0]?.generated_text;
-
-    if (!generatedText) {
-      throw new Error('No generated text in Granite response');
-    }
-
-    // Clean up the text (remove extra whitespace, ensure proper formatting)
-    return generatedText.trim();
-
-  } catch (error) {
-    log.error('Granite text generation failed', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-    throw error;
-  }
 }
 
-/**
- * Create fallback critical fixes when Granite fails
- */
 function createFallbackCriticalFixes(slideCount: number): CriticalFix[] {
   return [
     {
@@ -426,25 +399,8 @@ function createFallbackCriticalFixes(slideCount: number): CriticalFix[] {
   ];
 }
 
-/**
- * Create fallback investor summary when Granite fails
- */
 function createFallbackInvestorSummary(): string {
   return 'The deck presents an interesting opportunity, but I need more information to make an investment decision. Specifically, I need to see concrete traction metrics and a clearer path to revenue. The team background and competitive positioning also require more detail before I can assess execution risk.';
-}
-export function createNeutralRubricScores(reason: string): any {
-  return {
-    problemClarity: { score: 5, rationale: `Unable to score: ${reason}` },
-    solutionFit: { score: 5, rationale: `Unable to score: ${reason}` },
-    marketSize: { score: 5, rationale: `Unable to score: ${reason}` },
-    tractionEvidence: { score: 5, rationale: `Unable to score: ${reason}` },
-    businessModel: { score: 5, rationale: `Unable to score: ${reason}` },
-    competitiveMoat: { score: 5, rationale: `Unable to score: ${reason}` },
-    teamStrength: { score: 5, rationale: `Unable to score: ${reason}` },
-    askClarity: { score: 5, rationale: `Unable to score: ${reason}` },
-    narrativeFlow: { score: 5, rationale: `Unable to score: ${reason}` },
-    investorReadiness: { score: 5, rationale: `Unable to score: ${reason}` },
-  };
 }
 
 // Made with Bob

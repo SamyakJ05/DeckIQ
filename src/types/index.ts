@@ -30,6 +30,29 @@ export interface SlideContent {
   bodyText: string;
   estimatedSlideType: SlideType;
   usedOcr?: boolean; // True if OCR was used to extract text from image-only page
+  visualContext?: VisualSlideContext; // Visual analysis from Granite Vision
+}
+
+// ============================================================================
+// Vision Analysis Types
+// ============================================================================
+
+export interface VisualSlideContext {
+  hasCharts: boolean;
+  hasImages: boolean;
+  hasTables: boolean;
+  chartData: string;       // Extracted values/labels from charts
+  imageDescriptions: string; // What images/logos are visible
+  tableData: string;       // Extracted table content
+  layoutDescription: string; // Overall slide layout summary
+  rawVisualText: string;   // Full vision model output
+}
+
+export interface SlideImage {
+  slideNumber: number;
+  base64: string;       // base64-encoded PNG, ready for vision API
+  width: number;
+  height: number;
 }
 
 // ============================================================================
@@ -117,6 +140,7 @@ export interface SlideAnalysis {
   graniteScores: RubricScores;
   slideHealthScore: number;
   usedOcr?: boolean; // True if OCR was used to extract text from image-only page
+  visualContext?: VisualSlideContext; // Visual analysis from Granite Vision
 }
 
 // ============================================================================

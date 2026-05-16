@@ -14,12 +14,15 @@ import type {
   RubricScores,
   SlideContent,
   SlideType,
+  VisualSlideContext,
 } from '@/types';
 import { parsePDF } from '@/lib/parsers/pdf-parser';
 import { parsePPTX } from '@/lib/parsers/pptx-parser';
 import { analyzeSlide } from '@/lib/ibm/nlu-client';
 import { log } from '@/lib/utils/logger';
 import { buildDeckMap, buildDeckContentSummary } from '@/lib/utils/deck-map-builder';
+import { extractSlideImages } from '@/lib/vision/pdf-to-images';
+import { analyzeSlideVisually } from '@/lib/vision/vision-client';
 import {
   callGraniteJSON,
   callGraniteJSONWithRateLimit,
@@ -154,6 +157,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       log.warn('Deck has fewer than 5 slides', { slideCount: slides.length });
     }
 
+    // Step 2.5: Extract slide images for vision analysis (only for PDFs)
+    let slideImages: Awaited<ReturnType<typeof extractSlideImages>> = [];
+    if (fileName.endsWith('.pdf')) {
+      try {
+        log.info('Extracting slide images for vision analysis', { slideCount: slides.length });
+        slideImages = await extractSlideImages(buffer, slides.length);
+        log.info('Slide image extraction complete', {
+          successCount: slideImages.filter(img => img.base64.length > 0).length
+        });
+      } catch (err) {
+        log.warn('Image extraction failed, continuing without vision analysis', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    } else {
+      log.info('Skipping vision analysis for PPTX files (PDF-only feature)');
+    }
+
     log.info('Starting NLU analysis', { slideCount: slides.length });
 
     // Step 3: Run Watson NLU analysis sequentially with rate limiting
@@ -184,12 +205,47 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       successCount: nluResults.filter(r => r.keywords[0]?.text !== '[NLU unavailable]').length,
     });
 
-    // Build temporary slide analysis objects with NLU data (no Granite scores yet)
+    // Step 3.5: Run vision analysis in parallel (non-blocking)
+    let visionResults: VisualSlideContext[] = [];
+    if (slideImages.length > 0) {
+      log.info('Starting vision analysis', { slideCount: slides.length });
+      const visionPromises = slides.map((slide, i) =>
+        analyzeSlideVisually(
+          slideImages[i]?.base64 ?? '',
+          slide.estimatedSlideType,
+          slide.slideNumber
+        )
+      );
+      
+      const visionSettled = await Promise.allSettled(visionPromises);
+      visionResults = visionSettled.map(result =>
+        result.status === 'fulfilled' ? result.value : {
+          hasCharts: false,
+          hasImages: false,
+          hasTables: false,
+          chartData: '',
+          imageDescriptions: '',
+          tableData: '',
+          layoutDescription: '',
+          rawVisualText: '',
+        }
+      );
+      
+      log.info('Vision analysis complete', {
+        slideCount: slides.length,
+        chartsDetected: visionResults.filter(v => v.hasCharts).length,
+        imagesDetected: visionResults.filter(v => v.hasImages).length,
+        tablesDetected: visionResults.filter(v => v.hasTables).length,
+      });
+    }
+
+    // Build temporary slide analysis objects with NLU data and vision context
     const slidesWithNLU = slides.map((slide, index) => ({
       slideNumber: slide.slideNumber,
       slideType: slide.estimatedSlideType,
       rawText: slide.bodyText,
       nluResult: nluResults[index],
+      visualContext: visionResults[index] || null,
     }));
 
     // Step 4: Build deck-level context (Deck Map and Content Summary)
@@ -239,7 +295,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           slidesWithNLU.length,
           slide.nluResult,
           deckMap,
-          deckContentSummary
+          deckContentSummary,
+          slide.visualContext  // Pass visual context to prompt builder
         );
         
         const result = await callGraniteJSONWithRateLimit(prompt) as RubricScores;
@@ -282,6 +339,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         graniteScores,
         slideHealthScore,
         usedOcr: slides[index].usedOcr, // Propagate OCR flag from parsed slide
+        visualContext: slide.visualContext, // Propagate visual context
       };
     });
 

@@ -495,6 +495,134 @@ export default function SlideReviewPage() {
               </div>
             )}
 
+            {/* Visual Context Display (shown in all tabs if available) */}
+            {slide?.visualContext && (slide.visualContext.hasCharts || slide.visualContext.hasImages || slide.visualContext.hasTables) && (
+              <div style={{
+                marginTop: activeCritiqueTab === 'critique' ? 'var(--sp-lg)' : 0,
+                padding: 'var(--sp-md)',
+                borderRadius: 'var(--r-md)',
+                background: 'rgba(100,150,255,0.05)',
+                border: '1px solid rgba(100,150,255,0.15)',
+              }}>
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'rgba(100,150,255,0.9)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 'var(--sp-sm)',
+                }}>
+                  📊 Visual Analysis
+                </div>
+                <p style={{
+                  fontSize: '13px',
+                  color: 'var(--ink)',
+                  lineHeight: 1.5,
+                  marginBottom: 'var(--sp-sm)',
+                }}>
+                  {slide.visualContext.layoutDescription}
+                </p>
+                <div style={{ display: 'flex', gap: 'var(--sp-xs)', flexWrap: 'wrap', marginBottom: 'var(--sp-sm)' }}>
+                  {slide.visualContext.hasCharts && (
+                    <span style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      background: 'rgba(59,130,246,0.15)',
+                      color: 'rgb(96,165,250)',
+                      border: '1px solid rgba(59,130,246,0.25)',
+                      fontWeight: 500,
+                    }}>
+                      📊 Chart detected
+                    </span>
+                  )}
+                  {slide.visualContext.hasImages && (
+                    <span style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      background: 'rgba(34,197,94,0.15)',
+                      color: 'rgb(74,222,128)',
+                      border: '1px solid rgba(34,197,94,0.25)',
+                      fontWeight: 500,
+                    }}>
+                      🖼️ Image detected
+                    </span>
+                  )}
+                  {slide.visualContext.hasTables && (
+                    <span style={{
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      background: 'rgba(168,85,247,0.15)',
+                      color: 'rgb(192,132,252)',
+                      border: '1px solid rgba(168,85,247,0.25)',
+                      fontWeight: 500,
+                    }}>
+                      📋 Table detected
+                    </span>
+                  )}
+                </div>
+                {slide.visualContext.chartData && (
+                  <div style={{ marginTop: 'var(--sp-sm)' }}>
+                    <div style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--muted)',
+                      marginBottom: '4px',
+                    }}>
+                      Chart Data:
+                    </div>
+                    <p style={{
+                      fontSize: '12px',
+                      color: 'var(--ink-light)',
+                      lineHeight: 1.4,
+                    }}>
+                      {slide.visualContext.chartData}
+                    </p>
+                  </div>
+                )}
+                {slide.visualContext.tableData && (
+                  <div style={{ marginTop: 'var(--sp-sm)' }}>
+                    <div style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--muted)',
+                      marginBottom: '4px',
+                    }}>
+                      Table Data:
+                    </div>
+                    <p style={{
+                      fontSize: '12px',
+                      color: 'var(--ink-light)',
+                      lineHeight: 1.4,
+                    }}>
+                      {slide.visualContext.tableData}
+                    </p>
+                  </div>
+                )}
+                {slide.visualContext.imageDescriptions && (
+                  <div style={{ marginTop: 'var(--sp-sm)' }}>
+                    <div style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--muted)',
+                      marginBottom: '4px',
+                    }}>
+                      Images:
+                    </div>
+                    <p style={{
+                      fontSize: '12px',
+                      color: 'var(--ink-light)',
+                      lineHeight: 1.4,
+                    }}>
+                      {slide.visualContext.imageDescriptions}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Rewrite tab */}
             {activeCritiqueTab === 'rewrite' && (
               <div className="rewrite-block">

@@ -26,6 +26,7 @@ const INITIAL_STEPS: Step[] = [
 export default function UploadPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedFileRef = useRef<File | null>(null);
 
   const [isLight, setIsLight] = useState(false);
   const [uploadState, setUploadState] = useState<UploadState>('idle');
@@ -35,6 +36,7 @@ export default function UploadPage() {
   const [urlValue, setUrlValue] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     const saved = localStorage.getItem('deckiq-mode');
@@ -52,15 +54,19 @@ export default function UploadPage() {
   }
 
   function showFile(file: File) {
+    selectedFileRef.current = file;
     setFileName(file.name);
-    setFileSize((file.size / 1024 / 1024).toFixed(1) + ' MB · Counting slides…');
+    setFileSize((file.size / 1024 / 1024).toFixed(1) + ' MB');
     setUploadState('file-selected');
+    setErrorMsg('');
   }
 
   function removeFile() {
+    selectedFileRef.current = null;
     setUploadState('idle');
     setFileName('');
     setFileSize('');
+    setErrorMsg('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -87,27 +93,24 @@ export default function UploadPage() {
 
   function startFromUrl() {
     if (!urlValue.trim()) return;
-    runProcessing();
+    // URL upload not yet supported — show error
+    setErrorMsg('URL upload not supported yet. Please upload a PDF or PPTX file.');
   }
 
   function startAnalysis() {
-    runProcessing();
+    if (!selectedFileRef.current) return;
+    runAnalysis(selectedFileRef.current);
   }
 
-  function runProcessing() {
-    setSteps(INITIAL_STEPS);
-    setCurrentStep(2);
-    setUploadState('processing');
-
+  function advanceSteps(timers: ReturnType<typeof setTimeout>[]) {
     const transitions = [
-      { step: 3, delay: 1800 },
-      { step: 4, delay: 3600 },
-      { step: 5, delay: 5400 },
-      { step: 6, delay: 7200 },
+      { step: 3, delay: 2000 },
+      { step: 4, delay: 5000 },
+      { step: 5, delay: 9000 },
+      { step: 6, delay: 12000 },
     ];
-
     transitions.forEach(({ step, delay }) => {
-      setTimeout(() => {
+      timers.push(setTimeout(() => {
         setCurrentStep(step);
         setSteps(prev =>
           prev.map(s => {
@@ -116,12 +119,40 @@ export default function UploadPage() {
             return s;
           })
         );
-      }, delay);
+      }, delay));
     });
+  }
 
-    setTimeout(() => {
-      router.push('/dashboard');
-    }, 9000);
+  async function runAnalysis(file: File) {
+    setSteps(INITIAL_STEPS);
+    setCurrentStep(2);
+    setUploadState('processing');
+    setErrorMsg('');
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    advanceSteps(timers);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      timers.forEach(clearTimeout);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Analysis failed (${res.status})`);
+      }
+
+      const result = await res.json();
+      sessionStorage.setItem('deckiq-analysis', JSON.stringify(result));
+      sessionStorage.setItem('deckiq-filename', file.name);
+      router.push('/report');
+    } catch (err) {
+      timers.forEach(clearTimeout);
+      setErrorMsg(err instanceof Error ? err.message : 'Analysis failed. Please try again.');
+      setUploadState('file-selected');
+    }
   }
 
   function renderStepIcon(status: StepStatus) {
@@ -266,9 +297,16 @@ export default function UploadPage() {
                 <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={startAnalysis}>
                   Analyze deck →
                 </button>
-                <p style={{ textAlign: 'center', marginTop: 'var(--sp-md)', fontSize: '13px', color: 'var(--muted)' }}>
-                  Free · No account needed · Results in ~60 seconds
-                </p>
+                {errorMsg && (
+                  <p style={{ textAlign: 'center', marginTop: 'var(--sp-md)', fontSize: '13px', color: 'var(--danger)' }}>
+                    {errorMsg}
+                  </p>
+                )}
+                {!errorMsg && (
+                  <p style={{ textAlign: 'center', marginTop: 'var(--sp-md)', fontSize: '13px', color: 'var(--muted)' }}>
+                    Free · No account needed · Results in ~60 seconds
+                  </p>
+                )}
               </div>
             </>
           )}

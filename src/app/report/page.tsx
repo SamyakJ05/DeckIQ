@@ -2,15 +2,80 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import type { DeckAnalysisResult, RubricScores } from '@/types';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function scoreGrade(s: number): string {
+  if (s >= 90) return 'A+';
+  if (s >= 85) return 'A';
+  if (s >= 80) return 'A-';
+  if (s >= 75) return 'B+';
+  if (s >= 70) return 'B';
+  if (s >= 65) return 'B-';
+  if (s >= 60) return 'C+';
+  if (s >= 55) return 'C';
+  if (s >= 50) return 'C-';
+  return 'D';
+}
+
+function scoreColor(s: number): string {
+  if (s >= 70) return 'var(--success)';
+  if (s >= 50) return 'var(--warn)';
+  return 'var(--danger)';
+}
+
+// Hexagon radar: 6 axes mapped to rubric dims (score 0-10 → 0-100%)
+// Axes clockwise from top: Problem, Market, Solution, Traction, Team, Ask
+// Outer vertices at 100%: (150,40) (260,95) (260,205) (150,260) (40,205) (40,95)
+function radarPoints(r: RubricScores): string {
+  const cx = 150, cy = 150;
+  const axes = [
+    { score: r.problemClarity.score,    ox: 150, oy: 40  },
+    { score: r.marketSize.score,        ox: 260, oy: 95  },
+    { score: r.solutionFit.score,       ox: 260, oy: 205 },
+    { score: r.tractionEvidence.score,  ox: 150, oy: 260 },
+    { score: r.teamStrength.score,      ox: 40,  oy: 205 },
+    { score: r.askClarity.score,        ox: 40,  oy: 95  },
+  ];
+  return axes
+    .map(({ score, ox, oy }) => {
+      const t = score / 10;
+      const x = Math.round(cx + t * (ox - cx));
+      const y = Math.round(cy + t * (oy - cy));
+      return `${x},${y}`;
+    })
+    .join(' ');
+}
+
+const RUBRIC_LABELS: Record<string, string> = {
+  problemClarity: 'Problem clarity',
+  solutionFit: 'Solution fit',
+  marketSize: 'Market size',
+  tractionEvidence: 'Traction',
+  businessModel: 'Business model',
+  competitiveMoat: 'Competitive moat',
+  teamStrength: 'Team strength',
+  askClarity: 'Ask clarity',
+  narrativeFlow: 'Narrative flow',
+  investorReadiness: 'Investor readiness',
+};
 
 export default function ReportPage() {
   const [isLight, setIsLight] = useState(false);
+  const [analysis, setAnalysis] = useState<DeckAnalysisResult | null>(null);
+  const [deckFileName, setDeckFileName] = useState('');
 
   useEffect(() => {
     if (localStorage.getItem('deckiq-mode') === 'light') {
       document.body.classList.add('light');
       setIsLight(true);
     }
+    const raw = sessionStorage.getItem('deckiq-analysis');
+    if (raw) {
+      try { setAnalysis(JSON.parse(raw)); } catch { /* corrupt data */ }
+    }
+    setDeckFileName(sessionStorage.getItem('deckiq-filename') ?? '');
   }, []);
 
   function toggleMode() {
@@ -18,6 +83,32 @@ export default function ReportPage() {
     const light = document.body.classList.contains('light');
     localStorage.setItem('deckiq-mode', light ? 'light' : 'dark');
     setIsLight(light);
+  }
+
+  // Derived display values
+  const score = analysis?.overallScore ?? 0;
+  const ringOffset = Math.round(528 * (1 - score / 100));
+  const grade = scoreGrade(score);
+  const fixes = analysis?.criticalFixes ?? [];
+  const slides = analysis?.perSlideAnalysis ?? [];
+  const rubric = analysis?.rubricBreakdown;
+  const radarPts = rubric ? radarPoints(rubric) : '150,150 150,150 150,150 150,150 150,150 150,150';
+  const radarDotAxes = rubric ? [
+    { score: rubric.problemClarity.score,   ox: 150, oy: 40  },
+    { score: rubric.marketSize.score,       ox: 260, oy: 95  },
+    { score: rubric.solutionFit.score,      ox: 260, oy: 205 },
+    { score: rubric.tractionEvidence.score, ox: 150, oy: 260 },
+    { score: rubric.teamStrength.score,     ox: 40,  oy: 205 },
+    { score: rubric.askClarity.score,       ox: 40,  oy: 95  },
+  ] : [];
+
+  if (!analysis) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '16px', color: 'var(--muted)' }}>
+        <p style={{ fontSize: '18px' }}>No analysis found.</p>
+        <Link href="/upload" className="btn btn-primary btn-md">Upload a deck →</Link>
+      </div>
+    );
   }
 
   return (
@@ -61,25 +152,23 @@ export default function ReportPage() {
               <svg viewBox="0 0 200 200">
                 <circle cx="100" cy="100" r="84" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="10" />
                 <circle cx="100" cy="100" r="84" fill="none" stroke="#ea2804" strokeWidth="10"
-                  strokeDasharray="528" strokeDashoffset="153" strokeLinecap="round" />
+                  strokeDasharray="528" strokeDashoffset={ringOffset} strokeLinecap="round" />
               </svg>
               <div className="score-hero-center">
-                <span className="score-hero-num">71</span>
+                <span className="score-hero-num">{score}</span>
                 <span className="score-hero-tag">DeckIQ</span>
               </div>
             </div>
 
             {/* Right copy */}
             <div>
-              <div className="hero-grade">B+</div>
-              <div className="hero-verdict">Investable with fixes.<br />3 critical issues blocking close.</div>
-              <p className="hero-sub">Luminary AI scores in the top 28% of Series A decks DeckIQ has analyzed. Strong problem framing and market logic. Traction narrative and team credibility need work before a top-tier meeting.</p>
+              <div className="hero-grade">{grade}</div>
+              <div className="hero-verdict">{analysis.verdict}</div>
+              <p className="hero-sub">{analysis.investorSummary}</p>
               <div className="hero-pills">
-                <span className="badge badge-primary">Series A</span>
-                <span className="badge badge-muted">$3M ask</span>
-                <span className="badge badge-muted">AI / Productivity</span>
-                <span className="badge badge-muted">12 slides</span>
-                <span className="badge badge-muted">Analyzed Oct 15, 2025</span>
+                {deckFileName && <span className="badge badge-primary">{deckFileName}</span>}
+                <span className="badge badge-muted">{slides.length} slides</span>
+                <span className="badge badge-muted">Analyzed {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
               </div>
               <div className="hero-actions">
                 <Link href="/slide-review" className="btn btn-dark btn-lg">Review slides →</Link>
@@ -115,17 +204,17 @@ export default function ReportPage() {
                 <line x1="150" y1="150" x2="150" y2="260" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
                 <line x1="150" y1="150" x2="40" y2="205" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
                 <line x1="150" y1="150" x2="40" y2="95" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-                {/* Data polygon: Problem 88, Market 82, Solution 75, Traction 45, Team 52, Ask 61 */}
-                {/* Computed: (150,53) (228,105) (221,191) (150,200) (101,179) (92,116) */}
-                <polygon points="150,53 228,105 221,191 150,200 101,179 92,116"
+                {/* Data polygon from real rubric scores */}
+                <polygon points={radarPts}
                   fill="rgba(234,40,4,0.15)" stroke="#ea2804" strokeWidth="2" strokeLinejoin="round" />
                 {/* Dots at each vertex */}
-                <circle cx="150" cy="53" r="4" fill="#ea2804" />
-                <circle cx="228" cy="105" r="4" fill="#ea2804" />
-                <circle cx="221" cy="191" r="4" fill="#ea2804" />
-                <circle cx="150" cy="200" r="4" fill="#dc2626" />
-                <circle cx="101" cy="179" r="4" fill="#d97706" />
-                <circle cx="92" cy="116" r="4" fill="#d97706" />
+                {radarDotAxes.map(({ score: s, ox, oy }, i) => {
+                  const t = s / 10;
+                  const x = Math.round(150 + t * (ox - 150));
+                  const y = Math.round(150 + t * (oy - 150));
+                  const color = s >= 7 ? '#ea2804' : s >= 5 ? '#d97706' : '#dc2626';
+                  return <circle key={i} cx={x} cy={y} r="4" fill={color} />;
+                })}
                 {/* Labels */}
                 <text x="150" y="28" textAnchor="middle" fontFamily="JetBrains Mono, monospace" fontSize="10" fill="rgba(240,237,229,0.5)">Problem</text>
                 <text x="275" y="95" textAnchor="start" fontFamily="JetBrains Mono, monospace" fontSize="10" fill="rgba(240,237,229,0.5)">Market</text>
@@ -139,56 +228,29 @@ export default function ReportPage() {
               </svg>
             </div>
 
-            {/* Category legend */}
+            {/* Category legend — real rubric data */}
             <div className="cat-legend">
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--success)' }}>88</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Problem &amp; market</div>
-                  <div className="cat-leg-desc">Pain quantified, market sourced bottom-up, urgency clear</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '88%', background: 'var(--success)' }}></div></div></div>
-              </div>
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--success)' }}>82</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Market sizing</div>
-                  <div className="cat-leg-desc">$24B SAM with credible source; SOM at 2% is defensible</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '82%', background: 'var(--success)' }}></div></div></div>
-              </div>
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--success)' }}>75</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Solution clarity</div>
-                  <div className="cat-leg-desc">Product legible in one slide; moat needs one more line</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '75%', background: 'var(--success)' }}></div></div></div>
-              </div>
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--warn)' }}>61</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Ask &amp; use of funds</div>
-                  <div className="cat-leg-desc">Amount clear; milestones not milestone-specific</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '61%', background: 'var(--warn)' }}></div></div></div>
-              </div>
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--warn)' }}>52</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Team credibility</div>
-                  <div className="cat-leg-desc">Strong domain; missing exits and advisor signals</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '52%', background: 'var(--warn)' }}></div></div></div>
-              </div>
-              <div className="cat-leg-item">
-                <span className="cat-leg-score" style={{ color: 'var(--danger)' }}>45</span>
-                <div className="cat-leg-info">
-                  <div className="cat-leg-name">Traction &amp; momentum</div>
-                  <div className="cat-leg-desc">MRR shown; growth rate absent — biggest drag in the deck</div>
-                </div>
-                <div className="cat-leg-bar"><div className="cat-leg-track"><div className="cat-leg-fill" style={{ width: '45%', background: 'var(--danger)' }}></div></div></div>
-              </div>
+              {rubric && (Object.entries(rubric) as [keyof RubricScores, { score: number; rationale: string }][])
+                .sort((a, b) => b[1].score - a[1].score)
+                .map(([key, { score: s, rationale }]) => {
+                  const pct = s * 10;
+                  const color = scoreColor(pct);
+                  return (
+                    <div key={key} className="cat-leg-item">
+                      <span className="cat-leg-score" style={{ color }}>{pct}</span>
+                      <div className="cat-leg-info">
+                        <div className="cat-leg-name">{RUBRIC_LABELS[key] ?? key}</div>
+                        <div className="cat-leg-desc">{rationale}</div>
+                      </div>
+                      <div className="cat-leg-bar">
+                        <div className="cat-leg-track">
+                          <div className="cat-leg-fill" style={{ width: `${pct}%`, background: color }}></div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              }
             </div>
           </div>
         </div>
@@ -198,75 +260,26 @@ export default function ReportPage() {
       <div className="issues-section">
         <div className="container">
           <div className="section-eyebrow">Issues ranked by investor impact</div>
-          <h2 className="section-headline">7 issues found.<br />3 are blocking.</h2>
-          <p className="section-body" style={{ marginBottom: 'var(--sp-3xl)' }}>Fix these in order. The first three are the difference between a pass and a meeting — VCs pattern-match them in the first skim.</p>
+          <h2 className="section-headline">{fixes.length} critical issues found.</h2>
+          <p className="section-body" style={{ marginBottom: 'var(--sp-3xl)' }}>Fix these in order. The first issues are the difference between a pass and a meeting — VCs pattern-match them in the first skim.</p>
           <div className="issues-grid">
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge sev-high" style={{ background: 'color-mix(in oklch,var(--danger) 12%,transparent)', color: 'var(--danger)' }}>Critical</span>
-                <span className="issue-slide-tag">Slide 06 · Traction</span>
+            {fixes.map((fix) => (
+              <div key={fix.rank} className="issue-card">
+                <div className="issue-card-top">
+                  <span className="issue-sev-badge sev-high" style={{ background: 'color-mix(in oklch,var(--danger) 12%,transparent)', color: 'var(--danger)' }}>
+                    Critical #{fix.rank}
+                  </span>
+                  <span className="issue-slide-tag">Slide {fix.slideToFix} · {RUBRIC_LABELS[fix.dimension] ?? fix.dimension}</span>
+                </div>
+                <div className="issue-card-title">{fix.fix}</div>
+                <div className="issue-card-body">
+                  Fixing this could improve your score by ~{fix.estimatedScoreImpact} points.
+                </div>
+                <Link href="/slide-review" className="issue-card-action">
+                  Fix this slide →
+                </Link>
               </div>
-              <div className="issue-card-title">No growth rate on the traction slide</div>
-              <div className="issue-card-body">$48K MRR is strong for the stage, but without a month-over-month growth rate VCs can't model momentum. The metric is meaningless without the slope. This is the leading cause of pass decisions at Series A.</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge sev-high" style={{ background: 'color-mix(in oklch,var(--danger) 12%,transparent)', color: 'var(--danger)' }}>Critical</span>
-                <span className="issue-slide-tag">Slide 09 · Team</span>
-              </div>
-              <div className="issue-card-title">Team slide missing credibility anchors</div>
-              <div className="issue-card-body">No prior exits, no advisor logos, no notable investors. Domain expertise is necessary but not sufficient at Series A. The question VCs ask is "why will YOU specifically win?" — this slide doesn't answer it.</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge" style={{ background: 'color-mix(in oklch,var(--warn) 12%,transparent)', color: 'var(--warn)' }}>Major</span>
-                <span className="issue-slide-tag">Slide 12 · The Ask</span>
-              </div>
-              <div className="issue-card-title">Ask not tied to 18-month milestones</div>
-              <div className="issue-card-body">$3M is stated and use-of-funds is present, but the round is not connected to specific milestones or a Series B trigger. VCs fund milestones. Reframe: "$3M takes us from X ARR to Y ARR and unlocks Series A at Z."</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge" style={{ background: 'color-mix(in oklch,var(--warn) 12%,transparent)', color: 'var(--warn)' }}>Major</span>
-                <span className="issue-slide-tag">Slide 07 · Competition</span>
-              </div>
-              <div className="issue-card-title">Competition matrix uses wrong axes</div>
-              <div className="issue-card-body">Price vs. features is a template — it doesn't show your real moat. VCs have seen 10,000 of these charts. Use axes that reflect where you specifically win: integration depth vs. on-device AI accuracy.</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge" style={{ background: 'color-mix(in oklch,var(--warn) 12%,transparent)', color: 'var(--warn)' }}>Major</span>
-                <span className="issue-slide-tag">Slide 11 · Financials</span>
-              </div>
-              <div className="issue-card-title">Projections lack stated assumptions</div>
-              <div className="issue-card-body">3-year revenue projections doubling each year with no unit economics math. VCs automatically discount ungrounded hockey sticks. Show the inputs: customers × ACV = ARR. Make the math obvious.</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
-            <div className="issue-card">
-              <div className="issue-card-top">
-                <span className="issue-sev-badge badge-muted">Minor</span>
-                <span className="issue-slide-tag">Slide 01 · Cover</span>
-              </div>
-              <div className="issue-card-title">Cover lacks a one-liner tagline</div>
-              <div className="issue-card-body">The cover shows the company name and a generic tagline. First 8 seconds = cognitive frame. Add a specific one-liner: "Luminary AI cuts enterprise meeting overhead by 70% using ambient AI that never joins the call."</div>
-              <Link href="/slide-review" className="issue-card-action">
-                Fix this slide →
-              </Link>
-            </div>
+            ))}
           </div>
         </div>
       </div>
@@ -275,7 +288,7 @@ export default function ReportPage() {
       <section className="compare-section">
         <div className="container">
           <div className="section-eyebrow">Benchmark comparison</div>
-          <h2 className="section-headline">How Luminary AI stacks up.</h2>
+          <h2 className="section-headline">How your deck stacks up.</h2>
           <p className="section-body">Compared against two funded Series A decks analyzed by DeckIQ. Scores reflect decks before the round closed.</p>
           <div className="compare-grid">
             <div className="compare-card">
@@ -290,15 +303,29 @@ export default function ReportPage() {
               </div>
             </div>
             <div className="compare-card current">
-              <div className="compare-score" style={{ color: 'var(--warn)' }}>71</div>
-              <div className="compare-name">Luminary AI (you)</div>
-              <div className="compare-meta">Series A · B+ · In progress</div>
-              <div className="compare-bar-row">
-                <div className="compare-bar-item"><span className="compare-bar-nm">Problem</span><div className="compare-bar-track"><div className="compare-bar-fill" style={{ width: '88%', background: 'var(--success)' }}></div></div></div>
-                <div className="compare-bar-item"><span className="compare-bar-nm">Traction</span><div className="compare-bar-track"><div className="compare-bar-fill" style={{ width: '45%', background: 'var(--danger)' }}></div></div></div>
-                <div className="compare-bar-item"><span className="compare-bar-nm">Team</span><div className="compare-bar-track"><div className="compare-bar-fill" style={{ width: '52%', background: 'var(--warn)' }}></div></div></div>
-                <div className="compare-bar-item"><span className="compare-bar-nm">Ask</span><div className="compare-bar-track"><div className="compare-bar-fill" style={{ width: '61%', background: 'var(--warn)' }}></div></div></div>
-              </div>
+              <div className="compare-score" style={{ color: scoreColor(score) }}>{score}</div>
+              <div className="compare-name">{deckFileName || 'Your deck'}</div>
+              <div className="compare-meta">{grade} · In progress</div>
+              {rubric && (
+                <div className="compare-bar-row">
+                  {([
+                    ['Problem', rubric.problemClarity.score],
+                    ['Traction', rubric.tractionEvidence.score],
+                    ['Team', rubric.teamStrength.score],
+                    ['Ask', rubric.askClarity.score],
+                  ] as [string, number][]).map(([label, s]) => {
+                    const pct = s * 10;
+                    return (
+                      <div key={label} className="compare-bar-item">
+                        <span className="compare-bar-nm">{label}</span>
+                        <div className="compare-bar-track">
+                          <div className="compare-bar-fill" style={{ width: `${pct}%`, background: scoreColor(pct) }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <div className="compare-card">
               <div className="compare-score" style={{ color: 'var(--success)' }}>79</div>
@@ -321,30 +348,16 @@ export default function ReportPage() {
           <div className="section-eyebrow" style={{ color: 'var(--primary)' }}>Recommended next steps</div>
           <h2 className="section-headline" style={{ color: 'var(--on-dark)' }}>Fix these three.<br />Re-analyze. Go raise.</h2>
           <div className="recs-grid">
-            <div className="rec-card">
-              <div className="rec-step">01 — Do this week</div>
-              <div className="rec-title">Add a growth rate to slide 6</div>
-              <div className="rec-body">Show 23% MoM growth in the headline. Add a 6-month sparkline chart showing $21K → $48K. This single change can move your Traction score from 45 to 75+ and your overall DeckIQ from 71 to 82.</div>
-              <Link href="/slide-review" className="rec-link">
-                See the rewrite suggestion →
-              </Link>
-            </div>
-            <div className="rec-card">
-              <div className="rec-step">02 — Do this week</div>
-              <div className="rec-title">Add advisor logos to slide 9</div>
-              <div className="rec-body">One well-known advisor logo in your team slide replaces three paragraphs of credentials. Reach out to 2-3 advisors with recognizable brand names in enterprise software. Even a letter of intent counts at this stage.</div>
-              <Link href="/slide-review" className="rec-link">
-                See the rewrite suggestion →
-              </Link>
-            </div>
-            <div className="rec-card">
-              <div className="rec-step">03 — Before the meeting</div>
-              <div className="rec-title">Rewrite the ask as milestones</div>
-              <div className="rec-body">The ask slide is your close. "$3M takes us to $2.4M ARR in 18 months, which unlocks Series A at $40M+ ARR" is infinitely more investable than a pie chart of hiring spend. Give VCs a picture of success.</div>
-              <Link href="/slide-review" className="rec-link">
-                See the rewrite suggestion →
-              </Link>
-            </div>
+            {fixes.map((fix, i) => (
+              <div key={fix.rank} className="rec-card">
+                <div className="rec-step">{String(i + 1).padStart(2, '0')} — Do this first</div>
+                <div className="rec-title">{RUBRIC_LABELS[fix.dimension] ?? fix.dimension}: Slide {fix.slideToFix}</div>
+                <div className="rec-body">{fix.fix} Estimated score impact: +{fix.estimatedScoreImpact} points.</div>
+                <Link href="/slide-review" className="rec-link">
+                  See the rewrite suggestion →
+                </Link>
+              </div>
+            ))}
           </div>
         </div>
       </div>

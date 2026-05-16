@@ -11,11 +11,42 @@ import { buildInvestorSummaryPrompt } from './prompts/investor-prompt';
 const WATSONX_API_KEY = process.env.WATSONX_API_KEY;
 const WATSONX_PROJECT_ID = process.env.WATSONX_PROJECT_ID;
 const WATSONX_URL = process.env.WATSONX_URL;
-const PRIMARY_MODEL = 'ibm/granite-3-3-8b-instruct';
-const FALLBACK_MODEL = process.env.GRANITE_FALLBACK_MODEL || 'ibm/granite-3-3-2b-instruct';
+const PRIMARY_MODEL = 'ibm/granite-3-8b-instruct';
+const FALLBACK_MODEL = process.env.GRANITE_FALLBACK_MODEL || 'ibm/granite-3-8b-instruct';
 
 const MAX_JSON_RETRIES = 3;
 const GENERATION_TIMEOUT_MS = 30000; // 30 seconds
+
+// IAM token cache — IBM Cloud tokens expire in 1 hour, refresh 5 min early
+let iamTokenCache: { token: string; expiresAt: number } | null = null;
+
+async function getIAMToken(): Promise<string> {
+  const now = Date.now();
+  if (iamTokenCache && now < iamTokenCache.expiresAt) {
+    return iamTokenCache.token;
+  }
+
+  const response = await fetch('https://iam.cloud.ibm.com/identity/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ibm:params:oauth:grant-type:apikey',
+      apikey: WATSONX_API_KEY!,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`IAM token exchange failed: ${response.status}`);
+  }
+
+  const data = await response.json() as { access_token: string; expires_in: number };
+  iamTokenCache = {
+    token: data.access_token,
+    // refresh 5 minutes before actual expiry
+    expiresAt: now + (data.expires_in - 300) * 1000,
+  };
+  return iamTokenCache.token;
+}
 
 interface GraniteGenerationParams {
   model_id: string;
@@ -76,6 +107,7 @@ export async function callGraniteJSON(
   };
 
   try {
+    const iamToken = await getIAMToken();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
@@ -84,7 +116,7 @@ export async function callGraniteJSON(
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Bearer ${WATSONX_API_KEY}`,
+        'Authorization': `Bearer ${iamToken}`,
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,
@@ -94,7 +126,7 @@ export async function callGraniteJSON(
 
     if (!response.ok) {
       const errorText = await response.text();
-      log.error('Granite API error', { 
+      log.error('Granite API error', {
         status: response.status, 
         statusText: response.statusText,
         error: errorText 
@@ -150,10 +182,12 @@ async function parseJSONWithRetry(
   attempt: number = 1
 ): Promise<any> {
   try {
-    // Try to extract JSON from the response (handle cases where model adds extra text)
-    const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
-    const jsonText = jsonMatch ? jsonMatch[0] : generatedText;
-    
+    // Strip markdown code fences (```json ... ``` or ``` ... ```)
+    let cleaned = generatedText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    // Extract first JSON object or array
+    const jsonMatch = cleaned.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    const jsonText = jsonMatch ? jsonMatch[0] : cleaned;
+
     const parsed = JSON.parse(jsonText);
     log.info('JSON parsed successfully', { attempt });
     return parsed;
@@ -191,12 +225,13 @@ CRITICAL: Your previous response was not valid JSON. Return ONLY valid JSON that
       project_id: WATSONX_PROJECT_ID!,
     };
 
+    const iamToken = await getIAMToken();
     const response = await fetch(`${WATSONX_URL}/ml/v1/text/generation?version=2023-05-29`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Bearer ${WATSONX_API_KEY}`,
+        'Authorization': `Bearer ${iamToken}`,
       },
       body: JSON.stringify(requestBody),
     });
@@ -323,6 +358,7 @@ export async function callGraniteText(prompt: string): Promise<string> {
   };
 
   try {
+    const iamToken = await getIAMToken();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
@@ -331,7 +367,7 @@ export async function callGraniteText(prompt: string): Promise<string> {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Bearer ${WATSONX_API_KEY}`,
+        'Authorization': `Bearer ${iamToken}`,
       },
       body: JSON.stringify(requestBody),
       signal: controller.signal,

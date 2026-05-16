@@ -1,14 +1,12 @@
 /**
  * PDF Parser for DeckIQ
- * Extracts text content from PDF files page-by-page using pdf-parse
+ * Extracts text content from PDF files page-by-page using pdf-parse v2
  */
 
-import * as pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
+import * as PDFWorker from 'pdf-parse/worker';
 import type { SlideContent } from '@/types';
 import { buildSlideContent } from './parser-utils';
-
-// Handle both CommonJS and ESM exports
-const pdf = (pdfParse as any).default || pdfParse;
 
 /**
  * Parse a PDF buffer and extract slide content
@@ -16,48 +14,19 @@ const pdf = (pdfParse as any).default || pdfParse;
  * @returns Array of SlideContent objects, one per page
  */
 export async function parsePDF(buffer: Buffer): Promise<SlideContent[]> {
+  // worker must be injected explicitly in Next.js server environment
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parser = new PDFParse({ data: buffer, worker: PDFWorker as any });
   try {
-    const data = await pdf(buffer);
-    
-    // pdf-parse returns full text, we need to split by pages
-    // The library provides numpages but not per-page text directly
-    // We'll use a workaround: parse with page render option
-    const pagesText: string[] = [];
-    
-    // Parse again with page-by-page extraction
-    const options = {
-      max: data.numpages,
-      pagerender: async (pageData: any) => {
-        const textContent = await pageData.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        pagesText.push(pageText);
-        return pageText;
-      },
-    };
-    
-    await pdf(buffer, options);
-    
-    // If page-by-page extraction failed, fall back to splitting full text
-    if (pagesText.length === 0) {
-      // Rough heuristic: split by form feed or estimate based on length
-      const fullText = data.text;
-      const estimatedPages = Math.max(1, data.numpages);
-      const charsPerPage = Math.ceil(fullText.length / estimatedPages);
-      
-      for (let i = 0; i < estimatedPages; i++) {
-        const start = i * charsPerPage;
-        const end = Math.min((i + 1) * charsPerPage, fullText.length);
-        pagesText.push(fullText.substring(start, end));
-      }
-    }
-    
+    const result = await parser.getText();
+    const pagesText = result.pages.map((p: { text: string; num: number }) => p.text);
     return buildSlideContent(pagesText);
   } catch (error) {
     throw new Error(
       `PDF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
+  } finally {
+    await parser.destroy();
   }
 }
 

@@ -8,7 +8,8 @@ import { IamAuthenticator } from 'ibm-watson/auth';
 import type { NLUResult } from '@/types';
 import { log } from '@/lib/utils/logger';
 
-const NLU_TIMEOUT = 10000; // 10 seconds as specified in PRD
+const NLU_TIMEOUT = 8000; // Reduced from 10s to 8s to prevent hanging
+const NLU_RATE_LIMIT_DELAY_MS = 500; // 500ms delay between requests
 
 // Initialize NLU client (singleton pattern)
 let nluInstance: NaturalLanguageUnderstandingV1 | null = null;
@@ -35,10 +36,20 @@ function getNLUInstance(): NaturalLanguageUnderstandingV1 {
 }
 
 /**
- * Analyze slide text using Watson NLU
+ * Sleep utility for rate limiting
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Analyze slide text using Watson NLU with rate limiting
  * Returns real NLU data or fallback on timeout/error
  */
 export async function analyzeSlide(text: string): Promise<NLUResult> {
+  // Add delay for rate limiting
+  await sleep(NLU_RATE_LIMIT_DELAY_MS);
+  
   // Validate input
   if (!text || text.trim().length < 10) {
     log.warn('Slide text too short for NLU analysis', { textLength: text.length });
@@ -83,10 +94,16 @@ export async function analyzeSlide(text: string): Promise<NLUResult> {
     return transformNLUResponse(response.result);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    log.error('NLU analysis failed', {
-      error: errorMessage,
-      textPreview: text.substring(0, 100),
-    });
+    
+    // Check if it's a timeout
+    if (errorMessage.includes('timeout')) {
+      log.warn('NLU request timeout, using fallback', { timeout: NLU_TIMEOUT });
+    } else {
+      log.error('NLU analysis failed', {
+        error: errorMessage,
+        textPreview: text.substring(0, 100),
+      });
+    }
 
     return createFallbackNLUResult(errorMessage);
   }

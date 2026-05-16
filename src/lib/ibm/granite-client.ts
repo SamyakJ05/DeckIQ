@@ -14,8 +14,10 @@ const WATSONX_URL = process.env.WATSONX_URL;
 const PRIMARY_MODEL = 'ibm/granite-3-8b-instruct';
 const FALLBACK_MODEL = process.env.GRANITE_FALLBACK_MODEL || 'ibm/granite-3-8b-instruct';
 
-const MAX_JSON_RETRIES = 3;
-const GENERATION_TIMEOUT_MS = 30000; // 30 seconds
+const MAX_JSON_RETRIES = 2; // Reduced from 3 to prevent hanging
+const GENERATION_TIMEOUT_MS = 15000; // Reduced from 30s to 15s
+const RATE_LIMIT_DELAY_MS = 500; // 500ms delay between requests (2 req/sec = 500ms)
+const MAX_FALLBACK_RETRIES = 1; // Only try fallback once
 
 // IAM token cache — IBM Cloud tokens expire in 1 hour, refresh 5 min early
 let iamTokenCache: { token: string; expiresAt: number } | null = null;
@@ -132,10 +134,15 @@ export async function callGraniteJSON(
         error: errorText 
       });
 
-      // If primary model fails with rate limit or quota, try fallback
+      // If primary model fails with rate limit, try fallback ONCE
       if (!useFallback && (response.status === 429 || response.status === 503)) {
-        log.warn('Primary model rate limited, trying fallback model');
-        return callGraniteJSON(prompt, true);
+        log.warn('Primary model rate limited, trying fallback model once');
+        try {
+          return await callGraniteJSON(prompt, true);
+        } catch (fallbackError) {
+          log.error('Fallback model also failed, using neutral scores');
+          throw new Error(`Both models failed: ${response.status}`);
+        }
       }
 
       throw new Error(`Granite API error: ${response.status} ${response.statusText}`);
@@ -159,16 +166,35 @@ export async function callGraniteJSON(
 
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      log.error('Granite request timeout', { model: modelId });
-      throw new Error('Granite request timed out after 30 seconds');
+      log.error('Granite request timeout', { model: modelId, timeout: GENERATION_TIMEOUT_MS });
+      throw new Error(`Granite request timed out after ${GENERATION_TIMEOUT_MS/1000}s`);
     }
 
-    log.error('Granite call failed', { 
-      model: modelId, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    log.error('Granite call failed', {
+      model: modelId,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
     throw error;
   }
+}
+
+/**
+ * Sleep utility for rate limiting
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Call Granite with rate limiting (500ms delay)
+ * Wrapper around callGraniteJSON to enforce rate limits
+ */
+export async function callGraniteJSONWithRateLimit(
+  prompt: string,
+  useFallback: boolean = false
+): Promise<any> {
+  await sleep(RATE_LIMIT_DELAY_MS);
+  return callGraniteJSON(prompt, useFallback);
 }
 
 /**

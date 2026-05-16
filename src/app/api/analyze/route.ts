@@ -22,6 +22,7 @@ import { log } from '@/lib/utils/logger';
 import { buildDeckMap, buildDeckContentSummary } from '@/lib/utils/deck-map-builder';
 import {
   callGraniteJSON,
+  callGraniteJSONWithRateLimit,
   createNeutralRubricScores,
   getTopCriticalFixes,
   getInvestorSummary
@@ -155,28 +156,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     log.info('Starting NLU analysis', { slideCount: slides.length });
 
-    // Step 3: Run Watson NLU analysis on all slides in parallel
-    const nluResults = await Promise.all(
-      slides.map(async (slide) => {
-        try {
-          return await analyzeSlide(slide.bodyText);
-        } catch (error) {
-          log.error('NLU analysis failed for slide', {
-            slideNumber: slide.slideNumber,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          // Return fallback on error
-          return {
-            sentiment: { label: 'neutral' as const, score: 0 },
-            tone: [{ label: 'polite' as const, score: 0.5 }],
-            keywords: [{ text: '[NLU unavailable]', relevance: 0 }],
-            entities: [],
-            categories: [{ label: '/analysis/unavailable', score: 0 }],
-            emotion: { joy: 0, fear: 0, anger: 0, disgust: 0, sadness: 0 },
-          };
-        }
-      })
-    );
+    // Step 3: Run Watson NLU analysis sequentially with rate limiting
+    const nluResults: NLUResult[] = [];
+    for (const slide of slides) {
+      try {
+        const result = await analyzeSlide(slide.bodyText);
+        nluResults.push(result);
+      } catch (error) {
+        log.error('NLU analysis failed for slide', {
+          slideNumber: slide.slideNumber,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        // Return fallback on error
+        nluResults.push({
+          sentiment: { label: 'neutral' as const, score: 0 },
+          tone: [{ label: 'polite' as const, score: 0.5 }],
+          keywords: [{ text: '[NLU unavailable]', relevance: 0 }],
+          entities: [],
+          categories: [{ label: '/analysis/unavailable', score: 0 }],
+          emotion: { joy: 0, fear: 0, anger: 0, disgust: 0, sadness: 0 },
+        });
+      }
+    }
 
     log.info('NLU analysis complete', {
       slideCount: slides.length,
@@ -209,33 +210,53 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       contentSummaryLength: deckContentSummary.length,
     });
 
-    // Step 5: Run Granite rubric scoring for all slides in parallel
+    // Step 5: Run Granite rubric scoring sequentially with rate limiting
     log.info('Starting Granite rubric scoring', { slideCount: slides.length });
     
-    const graniteResults = await Promise.all(
-      slidesWithNLU.map(async (slide, index) => {
-        try {
-          const prompt = buildRubricScoringPrompt(
-            slide.rawText,
-            slide.slideType,
-            slide.slideNumber,
-            slidesWithNLU.length,
-            slide.nluResult,
-            deckMap,
-            deckContentSummary
-          );
-          
-          return await callGraniteJSON(prompt);
-        } catch (error) {
-          log.error('Granite scoring failed for slide', {
-            slideNumber: slide.slideNumber,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          // Return neutral scores on failure instead of crashing
-          return createNeutralRubricScores('Granite API error');
+    const graniteResults: RubricScores[] = [];
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3; // Stop after 3 consecutive failures
+    
+    for (let i = 0; i < slidesWithNLU.length; i++) {
+      const slide = slidesWithNLU[i];
+      
+      // If too many consecutive failures, use fallback for remaining slides
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        log.warn('Too many consecutive Granite failures, using fallback for remaining slides', {
+          remainingSlides: slidesWithNLU.length - i
+        });
+        for (let j = i; j < slidesWithNLU.length; j++) {
+          graniteResults.push(createNeutralRubricScores('Too many API failures'));
         }
-      })
-    );
+        break;
+      }
+      
+      try {
+        const prompt = buildRubricScoringPrompt(
+          slide.rawText,
+          slide.slideType,
+          slide.slideNumber,
+          slidesWithNLU.length,
+          slide.nluResult,
+          deckMap,
+          deckContentSummary
+        );
+        
+        const result = await callGraniteJSONWithRateLimit(prompt);
+        graniteResults.push(result);
+        consecutiveFailures = 0; // Reset on success
+        
+      } catch (error) {
+        consecutiveFailures++;
+        log.error('Granite scoring failed for slide', {
+          slideNumber: slide.slideNumber,
+          consecutiveFailures,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        // Return neutral scores on failure instead of crashing
+        graniteResults.push(createNeutralRubricScores('Granite API error'));
+      }
+    }
 
     log.info('Granite rubric scoring complete', {
       slideCount: slides.length,

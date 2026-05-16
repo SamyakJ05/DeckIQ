@@ -1,0 +1,27 @@
+### Test Rate Limiting Fix
+### This file tests the /api/analyze endpoint with a sample PDF
+### Use REST Client extension in VS Code or curl
+
+### 1. Test with a sample PDF file
+POST http://localhost:3000/api/analyze
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test.pdf"
+Content-Type: application/pdf
+
+< ./test-deck.pdf
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Expected behavior:
+### - NLU analysis runs sequentially (one slide at a time with 500ms delay)
+### - Granite scoring runs sequentially (one slide at a time with 500ms delay)
+### - No 429 "Too Many Requests" errors in logs
+### - Total time: ~16 seconds for 16 slides (8s NLU + 8s Granite)
+### - Check .bob/log.md for confirmation
+
+### 2. Alternative: Use curl command
+### Run this in terminal:
+### curl -X POST http://localhost:3000/api/analyze \
+###   -F "file=@./test-deck.pdf" \
+###   -H "Content-Type: multipart/form-data"

@@ -1,10 +1,6 @@
 ---
-name: "DeckIQ Backend Pipeline"
-description: >
-  Use this skill when working on backend API routes, file parsers, IBM Watson NLU
-  integration, IBM watsonx.ai Granite integration, or any code under src/app/api/,
-  src/lib/parsers/, src/lib/segmentation/, or src/lib/ibm/. Covers the full
-  parse -> NLU -> Granite -> aggregate pipeline.
+name: deckiq-backend-pipeline
+description: Use this skill when working on backend API routes, file parsers, IBM Watson NLU integration, IBM watsonx.ai Granite integration, or any code under src/app/api/, src/lib/parsers/, src/lib/segmentation/, or src/lib/ibm/. Covers the full parse -> NLU -> Granite -> aggregate pipeline.
 ---
 
 # DeckIQ Backend Pipeline Skill

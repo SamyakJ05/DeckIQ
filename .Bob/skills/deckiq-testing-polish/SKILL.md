@@ -1,9 +1,6 @@
 ---
-name: "DeckIQ Testing & Polish"
-description: >
-  Use this skill for QA passes, edge case validation, performance tuning, logging,
-  feature flags, and hackathon submission preparation. Use after core features are
-  implemented but before the demo or submission deadline.
+name: deckiq-testing-polish
+description: Use this skill for QA passes, edge case validation, performance tuning, logging, feature flags, and hackathon submission preparation. Use after core features are implemented but before the demo or submission deadline.
 ---
 
 # DeckIQ Testing & Polish Skill

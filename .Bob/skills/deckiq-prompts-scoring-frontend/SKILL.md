@@ -1,10 +1,6 @@
 ---
-name: "DeckIQ Prompts, Scoring & UI"
-description: >
-  Use this skill when working on Granite prompt builders (src/lib/ibm/prompts/),
-  the scoring aggregator (src/lib/scoring/aggregator.ts), shared TypeScript types
-  (src/types/index.ts), or frontend components and pages (src/components/, src/app/report/,
-  src/app/slide-review/). Covers Person B's ownership areas.
+name: deckiq-prompts-scoring-frontend
+description: Use this skill when working on Granite prompt builders (src/lib/ibm/prompts/), the scoring aggregator (src/lib/scoring/aggregator.ts), shared TypeScript types (src/types/index.ts), or frontend components and pages (src/components/, src/app/report/, src/app/slide-review/). Covers Person B's ownership areas.
 ---
 
 # DeckIQ Prompts, Scoring & UI Skill

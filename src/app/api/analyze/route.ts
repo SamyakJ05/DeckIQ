@@ -27,6 +27,7 @@ import {
   getInvestorSummary
 } from '@/lib/ibm/granite-client';
 import { buildRubricScoringPrompt } from '@/lib/ibm/prompts/rubric-prompt';
+import { buildEmotionalJourney } from '@/lib/scoring/emotional-journey';
 
 
 // ============================================================================
@@ -286,6 +287,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const parsedContentSummary = JSON.parse(deckContentSummary);
     const debugContentSummary = parsedContentSummary.slice(0, 2);
 
+    // Step 10: Build emotional journey from NLU sentiment data
+    log.info('Building emotional journey');
+    const emotionalJourney = buildEmotionalJourney(perSlideAnalysis);
+
     const analysisResult: DeckAnalysisResult = {
       overallScore,
       verdict,
@@ -293,7 +298,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       perSlideAnalysis,
       criticalFixes,
       investorSummary,
-      emotionalJourney: generateMockEmotionalJourney(slides.length),
+      emotionalJourney,
     };
 
     // Add debug metadata to response for manual inspection

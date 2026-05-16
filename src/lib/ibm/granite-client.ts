@@ -300,9 +300,9 @@ export async function getInvestorSummary(
 
 /**
  * Call Granite for plain text response (not JSON)
- * Used for investor summary which returns prose, not structured data
+ * Used for investor summary and slide rewrites which return prose, not structured data
  */
-async function callGraniteText(prompt: string): Promise<string> {
+export async function callGraniteText(prompt: string): Promise<string> {
   if (!WATSONX_API_KEY || !WATSONX_PROJECT_ID || !WATSONX_URL) {
     throw new Error('Missing watsonx.ai credentials in environment variables');
   }

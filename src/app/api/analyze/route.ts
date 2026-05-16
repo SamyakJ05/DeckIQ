@@ -19,6 +19,7 @@ import { parsePDF } from '@/lib/parsers/pdf-parser';
 import { parsePPTX } from '@/lib/parsers/pptx-parser';
 import { analyzeSlide } from '@/lib/ibm/nlu-client';
 import { log } from '@/lib/utils/logger';
+import { buildDeckMap, buildDeckContentSummary } from '@/lib/utils/deck-map-builder';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
@@ -113,6 +114,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
     );
 
+    // Step 4: Build deck-level context (Deck Map and Content Summary)
+    log.info('Building deck-level context');
+    const deckMap = buildDeckMap(perSlideAnalysis);
+    const deckContentSummary = buildDeckContentSummary(perSlideAnalysis);
+
+    log.info('Deck context built', {
+      deckMapLength: deckMap.length,
+      contentSummaryLength: deckContentSummary.length,
+    });
+
+    // Parse content summary for debug output (first 2 entries)
+    const parsedContentSummary = JSON.parse(deckContentSummary);
+    const debugContentSummary = parsedContentSummary.slice(0, 2);
+
     const analysisResult: DeckAnalysisResult = {
       overallScore: calculateMockOverallScore(slides.length),
       verdict: generateVerdict(slides.length),
@@ -123,7 +138,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       emotionalJourney: generateMockEmotionalJourney(slides.length),
     };
 
-    return NextResponse.json(analysisResult, { status: 200 });
+    // Add debug metadata to response for manual inspection
+    const responseWithDebug = {
+      ...analysisResult,
+      _debug: {
+        deckMap,
+        deckContentSummaryPreview: debugContentSummary,
+        deckContentSummaryFullLength: deckContentSummary.length,
+      },
+    };
+
+    return NextResponse.json(responseWithDebug, { status: 200 });
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(

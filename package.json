@@ -9,18 +9,22 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "@types/pdf-parse": "^1.1.5",
+    "axios": "^1.7.9",
     "caveman": "^0.1.6",
+    "fast-xml-parser": "^5.8.0",
     "ibm-cloud-sdk-core": "^5.4.19",
     "ibm-watson": "^12.2.0",
+    "jszip": "^3.10.1",
     "next": "16.2.6",
     "officeparser": "^7.0.3",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
-    "@napi-rs/canvas": "^0.1.80",
-    "pdfjs-dist": "^4.0.379",
+    "pdfjs-dist": "5.4.296",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "sharp": "^0.34.5",
     "tesseract.js": "^5.1.1"
   },
   "devDependencies": {

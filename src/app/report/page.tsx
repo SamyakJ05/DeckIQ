@@ -81,8 +81,6 @@ export default function ReportPage() {
   const [isLight, setIsLight] = useState(false);
   const [analysis, setAnalysis] = useState<DeckAnalysisResult | null>(null);
   const [deckFileName, setDeckFileName] = useState('');
-  const [exporting, setExporting] = useState(false);
-
   useEffect(() => {
     if (localStorage.getItem('deckiq-mode') === 'light') {
       document.body.classList.add('light');
@@ -102,13 +100,8 @@ export default function ReportPage() {
     setIsLight(light);
   }
 
-  async function handleExportPDF() {
-    setExporting(true);
-    try {
-      window.print();
-    } finally {
-      setTimeout(() => setExporting(false), 1500);
-    }
+  function handleExportPDF() {
+    window.print();
   }
 
   // Derived display values
@@ -158,14 +151,13 @@ export default function ReportPage() {
               <button
                 className="btn btn-outline btn-md"
                 onClick={handleExportPDF}
-                disabled={exporting}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="6 9 6 2 18 2 18 9" />
                   <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
                   <rect x="6" y="14" width="12" height="8" />
                 </svg>
-                {exporting ? 'Preparing PDF...' : 'Export PDF'}
+                Print / Save as PDF
               </button>
               <Link href="/upload" className="btn btn-primary btn-md">New analysis →</Link>
             </div>

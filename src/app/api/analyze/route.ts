@@ -13,13 +13,20 @@ import type {
   NLUResult,
   RubricScores,
   SlideContent,
+  SlideImage,
   SlideType,
+  VisualSlideContext,
 } from '@/types';
 import { parsePDF } from '@/lib/parsers/pdf-parser';
 import { parsePPTX } from '@/lib/parsers/pptx-parser';
+import { parsePptxDesign } from '@/lib/pptx-design-parser';
+import { parseGoogleSlides, extractPresentationId } from '@/lib/google-slides-parser';
 import { analyzeSlide } from '@/lib/ibm/nlu-client';
 import { log } from '@/lib/utils/logger';
 import { buildDeckMap, buildDeckContentSummary } from '@/lib/utils/deck-map-builder';
+import { extractSlideImages } from '@/lib/vision/pdf-to-images';
+import { generatePptxSlideImages } from '@/lib/vision/pptx-to-images';
+import { analyzeSlideVisually } from '@/lib/vision/vision-client';
 import {
   callGraniteJSON,
   callGraniteJSONWithRateLimit,
@@ -105,13 +112,75 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    // Parse multipart/form-data and extract file
+    // Parse multipart/form-data and extract file or URL
     const formData = await request.formData();
-    const file = formData.get('file') as File;
+    const file = formData.get('file') as File | null;
+    const url = formData.get('url') as string | null;
 
+    // Handle Google Slides URL
+    if (url) {
+      const presentationId = extractPresentationId(url);
+      if (!presentationId) {
+        return NextResponse.json(
+          { error: 'Invalid Google Slides URL. Please provide a valid presentation link.' },
+          { status: 400 }
+        );
+      }
+
+      try {
+        log.info('Parsing Google Slides presentation', { presentationId });
+        const googleSlidesResult = await parseGoogleSlides(presentationId);
+        
+        // Convert Google Slides result to SlideContent format
+        const slides: SlideContent[] = googleSlidesResult.slides.map(slide => ({
+          slideNumber: slide.index + 1,
+          title: undefined,
+          bodyText: slide.text,
+          estimatedSlideType: 'Other' as SlideType,
+          visualContext: {
+            hasCharts: slide.hasChart,
+            hasImages: slide.imageCount > 0,
+            hasTables: false,
+            chartData: '',
+            imageDescriptions: '',
+            tableData: '',
+            layoutDescription: '',
+            rawVisualText: '',
+            designScore: slide.designScore,
+            densityRating: slide.densityRating,
+            hasVisualHierarchy: slide.hasVisualHierarchy,
+            colorDiscipline: slide.colorDiscipline,
+            whitespaceQuality: slide.whitespaceQuality,
+            typographyNotes: `Fonts: ${slide.fontNames.join(', ') || 'default'}`,
+            designFeedback: slide.designFeedback,
+          },
+        }));
+
+        // Store deck design metadata for later use
+        const deckDesignMetadata = {
+          fontConsistencyScore: googleSlidesResult.globalFonts.length <= 2 ? 9 : googleSlidesResult.globalFonts.length <= 4 ? 6 : 3,
+          colorConsistencyScore: googleSlidesResult.globalColors.length <= 5 ? 9 : googleSlidesResult.globalColors.length <= 9 ? 6 : 3,
+          globalFonts: googleSlidesResult.globalFonts,
+          globalColors: googleSlidesResult.globalColors,
+        };
+
+        // Continue with normal analysis flow using slides
+        return await analyzeSlides(slides, 'google-slides', deckDesignMetadata);
+      } catch (error) {
+        log.error('Google Slides parsing failed', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : 'Failed to parse Google Slides presentation' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Handle file upload
     if (!file) {
       return NextResponse.json(
-        { error: 'No file provided' },
+        { error: 'No file or URL provided' },
         { status: 400 }
       );
     }
@@ -130,18 +199,100 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Determine file type and parse
     let slides: SlideContent[];
+    let deckDesignMetadata: { fontConsistencyScore: number; colorConsistencyScore: number; globalFonts: string[]; globalColors: string[] } | undefined;
+    let pptxImages: SlideImage[] = [];
     const fileName = file.name.toLowerCase();
-    
+
     if (fileName.endsWith('.pdf')) {
       slides = await parsePDF(buffer);
     } else if (fileName.endsWith('.pptx')) {
       slides = await parsePPTX(buffer);
+
+      // Parse PPTX design metadata and generate slide thumbnails
+      try {
+        log.info('Parsing PPTX design metadata');
+        const deckDesign = await parsePptxDesign(buffer);
+
+        // Merge design signals into each slide's visualContext
+        for (const slide of slides) {
+          const designSignals = deckDesign.slides[slide.slideNumber - 1];
+          if (designSignals) {
+            slide.visualContext = {
+              ...(slide.visualContext ?? {
+                hasCharts: false,
+                hasImages: false,
+                hasTables: false,
+                chartData: '',
+                imageDescriptions: '',
+                tableData: '',
+                layoutDescription: '',
+                rawVisualText: '',
+              }),
+              hasImages: designSignals.imageCount > 0,
+              designScore: designSignals.designScore,
+              densityRating: designSignals.densityRating,
+              hasVisualHierarchy: designSignals.hasVisualHierarchy,
+              colorDiscipline: designSignals.colorDiscipline,
+              whitespaceQuality: designSignals.whitespaceQuality,
+              typographyNotes: `Fonts: ${designSignals.fontNames.join(', ') || 'default'} · Sizes: ${designSignals.uniqueFontSizes.slice(0, 4).join('pt, ')}pt`,
+              designFeedback: designSignals.designFeedback,
+            };
+          }
+        }
+
+        // Store deck-level design metadata
+        deckDesignMetadata = {
+          fontConsistencyScore: deckDesign.fontConsistencyScore,
+          colorConsistencyScore: deckDesign.colorConsistencyScore,
+          globalFonts: deckDesign.globalFonts,
+          globalColors: deckDesign.globalColors,
+        };
+
+        log.info('PPTX design parsing complete', {
+          fontConsistency: deckDesign.fontConsistencyScore,
+          colorConsistency: deckDesign.colorConsistencyScore,
+        });
+
+        // Generate branded slide thumbnails for display
+        pptxImages = await generatePptxSlideImages(slides, deckDesign);
+      } catch (err) {
+        log.warn('PPTX design/thumbnail step failed, continuing without', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
     } else {
       return NextResponse.json(
         { error: 'Unsupported file type. Please upload a PDF or PPTX file.' },
         { status: 400 }
       );
     }
+
+    return await analyzeSlides(
+      slides,
+      fileName.endsWith('.pdf') ? 'pdf' : 'pptx',
+      deckDesignMetadata,
+      fileName.endsWith('.pdf') ? buffer : undefined,
+      fileName.endsWith('.pptx') ? pptxImages : undefined,
+    );
+  } catch (error) {
+    log.error('Analysis failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return NextResponse.json(
+      { error: 'Internal server error during analysis' },
+      { status: 500 }
+    );
+  }
+}
+
+async function analyzeSlides(
+  slides: SlideContent[],
+  fileType: 'pdf' | 'pptx' | 'google-slides',
+  deckDesignMetadata?: { fontConsistencyScore: number; colorConsistencyScore: number; globalFonts: string[]; globalColors: string[] },
+  pdfBuffer?: Buffer,
+  preGeneratedImages?: SlideImage[],
+): Promise<NextResponse> {
+  try {
 
     if (slides.length === 0) {
       return NextResponse.json(
@@ -152,6 +303,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (slides.length < 5) {
       log.warn('Deck has fewer than 5 slides', { slideCount: slides.length });
+    }
+
+    // Step 2.5: Obtain slide images — extracted from PDF or pre-rendered for PPTX
+    let slideImages: SlideImage[] = [];
+    if (fileType === 'pdf' && pdfBuffer) {
+      try {
+        log.info('Extracting slide images for vision analysis', { slideCount: slides.length });
+        slideImages = await extractSlideImages(pdfBuffer, slides.length);
+        log.info('Slide image extraction complete', {
+          successCount: slideImages.filter(img => img.base64.length > 0).length
+        });
+      } catch (err) {
+        log.warn('Image extraction failed, continuing without vision analysis', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    } else if (preGeneratedImages && preGeneratedImages.length > 0) {
+      slideImages = preGeneratedImages;
+      log.info('Using pre-generated PPTX slide thumbnails', { count: slideImages.length });
     }
 
     log.info('Starting NLU analysis', { slideCount: slides.length });
@@ -184,12 +354,48 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       successCount: nluResults.filter(r => r.keywords[0]?.text !== '[NLU unavailable]').length,
     });
 
-    // Build temporary slide analysis objects with NLU data (no Granite scores yet)
+    // Step 3.5: Run vision analysis in parallel (non-blocking)
+    let visionResults: VisualSlideContext[] = [];
+    if (fileType === 'pdf' && slideImages.length > 0) {
+      log.info('Starting vision analysis', { slideCount: slides.length });
+      const visionPromises = slides.map((slide, i) =>
+        analyzeSlideVisually(
+          slideImages[i]?.base64 ?? '',
+          slide.bodyText,
+          slide.estimatedSlideType,
+          slide.slideNumber
+        )
+      );
+      
+      const visionSettled = await Promise.allSettled(visionPromises);
+      visionResults = visionSettled.map(result =>
+        result.status === 'fulfilled' ? result.value : {
+          hasCharts: false,
+          hasImages: false,
+          hasTables: false,
+          chartData: '',
+          imageDescriptions: '',
+          tableData: '',
+          layoutDescription: '',
+          rawVisualText: '',
+        }
+      );
+      
+      log.info('Vision analysis complete', {
+        slideCount: slides.length,
+        chartsDetected: visionResults.filter(v => v.hasCharts).length,
+        imagesDetected: visionResults.filter(v => v.hasImages).length,
+        tablesDetected: visionResults.filter(v => v.hasTables).length,
+      });
+    }
+
+    // Build temporary slide analysis objects with NLU data and vision context
     const slidesWithNLU = slides.map((slide, index) => ({
       slideNumber: slide.slideNumber,
       slideType: slide.estimatedSlideType,
       rawText: slide.bodyText,
       nluResult: nluResults[index],
+      visualContext: visionResults[index] || slide.visualContext || null,
     }));
 
     // Step 4: Build deck-level context (Deck Map and Content Summary)
@@ -239,7 +445,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           slidesWithNLU.length,
           slide.nluResult,
           deckMap,
-          deckContentSummary
+          deckContentSummary,
+          slide.visualContext  // Pass visual context to prompt builder
         );
         
         const result = await callGraniteJSONWithRateLimit(prompt) as RubricScores;
@@ -274,6 +481,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           graniteScores.narrativeFlow.score) / 3 * 10
       );
 
+      // Attach slide image if available (from slideImages array)
+      const slideImage = slideImages[index];
+      const hasImage = slideImage && slideImage.base64.length > 0;
+
       return {
         slideNumber: slide.slideNumber,
         slideType: slide.slideType,
@@ -282,6 +493,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         graniteScores,
         slideHealthScore,
         usedOcr: slides[index].usedOcr, // Propagate OCR flag from parsed slide
+        visualContext: slide.visualContext, // Propagate visual context
+        image: hasImage ? slideImage.base64 : undefined, // Attach base64 image
+        imageMime: hasImage ? (slideImage.mimeType ?? 'image/jpeg') : undefined, // Attach MIME type
       };
     });
 
@@ -291,7 +505,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     
     // Calculate overall score from aggregated rubric
     const overallScore = calculateOverallScore(aggregatedRubricScores);
-    const verdict = generateVerdict(slides.length);
+    const verdict = generateVerdict(overallScore);
 
     // Step 8: Build full deck text for investor summary
     const fullDeckText = slides.map(s => s.bodyText).join('\n\n');
@@ -321,6 +535,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       criticalFixes,
       investorSummary,
       emotionalJourney,
+      deckDesign: deckDesignMetadata,
     };
 
     // Add debug metadata to response for manual inspection
@@ -335,7 +550,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(responseWithDebug, { status: 200 });
   } catch (error) {
-    console.error('Analysis error:', error);
+    log.error('Analysis error', { error: error instanceof Error ? error.message : 'Unknown error' });
     return NextResponse.json(
       { error: 'Failed to analyze deck', message: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -347,81 +562,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 // Mock Data Generators
 // ============================================================================
 
-function calculateMockOverallScore(slideCount: number): number {
-  // Base score varies with slide count
-  const baseScore = Math.min(70, 50 + slideCount * 2);
-  return Math.round(baseScore);
-}
-
-function generateVerdict(slideCount: number): string {
-  if (slideCount < 5) {
-    return 'Deck is too short - add more slides to tell your complete story';
-  } else if (slideCount < 10) {
-    return 'Good foundation, but needs more detail in key areas';
-  } else if (slideCount <= 15) {
-    return 'Strong foundation, but your traction story needs work';
-  } else {
-    return 'Comprehensive deck - focus on tightening the narrative';
-  }
-}
-
-function generateMockCriticalFixes(slideCount: number): Array<{
-  rank: number;
-  dimension: string;
-  fix: string;
-  estimatedScoreImpact: number;
-  slideToFix: number;
-}> {
-  return [
-    {
-      rank: 1,
-      dimension: 'tractionEvidence',
-      fix: 'Add specific revenue numbers or user growth metrics with timeframes',
-      estimatedScoreImpact: 12,
-      slideToFix: Math.min(slideCount, 5),
-    },
-    {
-      rank: 2,
-      dimension: 'marketSize',
-      fix: 'Include TAM/SAM/SOM breakdown with data sources',
-      estimatedScoreImpact: 8,
-      slideToFix: Math.min(slideCount, 4),
-    },
-    {
-      rank: 3,
-      dimension: 'askClarity',
-      fix: 'Specify exact funding amount and use of funds breakdown',
-      estimatedScoreImpact: 6,
-      slideToFix: slideCount,
-    },
-  ];
-}
-
-function generateMockInvestorSummary(slideCount: number): string {
-  return `Based on ${slideCount} slides: The problem is compelling and the solution is technically sound. However, I need to see concrete traction metrics before I can assess product-market fit. The team background is missing, which raises questions about execution capability.`;
-}
-
-function generateMockEmotionalJourney(slideCount: number): Array<{
-  slideIndex: number;
-  sentiment: number;
-  intensity: number;
-  toneFlags?: string[];
-}> {
-  const journey = [];
-  for (let i = 1; i <= slideCount; i++) {
-    // Create a simple emotional arc: start negative, peak positive in middle, end moderate
-    const progress = i / slideCount;
-    const sentiment = Math.sin(progress * Math.PI) * 0.8 - 0.2;
-    const intensity = 0.5 + Math.random() * 0.3;
-    
-    journey.push({
-      slideIndex: i,
-      sentiment: Math.round(sentiment * 100) / 100,
-      intensity: Math.round(intensity * 100) / 100,
-      toneFlags: i === 1 ? ['frustrated'] : i === Math.floor(slideCount / 2) ? ['excited', 'polite'] : ['satisfied'],
-    });
-  }
-  return journey;
+function generateVerdict(overallScore: number): string {
+  if (overallScore >= 80) return 'Strong deck with a compelling narrative and solid fundamentals.';
+  if (overallScore >= 65) return 'Good foundation, but key areas need strengthening before investor meetings.';
+  if (overallScore >= 50) return 'Potential is visible, but significant gaps exist in your investor story.';
+  return 'Major gaps detected — focus on fundamentals before approaching investors.';
 }
 
 function createMockRubricScores(): RubricScores {
@@ -436,34 +581,6 @@ function createMockRubricScores(): RubricScores {
     askClarity: { score: 5, rationale: 'Funding need not specified with exact amount' },
     narrativeFlow: { score: 7, rationale: 'Logical progression from problem to solution to traction' },
     investorReadiness: { score: 7, rationale: 'Deck structure is sound but missing key slides (Team, Competition, Ask)' },
-  };
-}
-
-/**
- * Create SlideAnalysis with real NLU data and mock Granite scores
- */
-function createSlideAnalysisWithRealNLU(
-  slideNumber: number,
-  slideType: SlideType,
-  rawText: string,
-  nluResult: NLUResult
-): SlideAnalysis {
-  const mockRubric = createMockRubricScores();
-  
-  // Calculate slide health score as weighted average of relevant dimensions
-  const slideHealthScore = Math.round(
-    (mockRubric.problemClarity.score +
-      mockRubric.solutionFit.score +
-      mockRubric.narrativeFlow.score) / 3 * 10
-  );
-
-  return {
-    slideNumber,
-    slideType,
-    rawText,
-    nluResult, // Real Watson NLU data
-    graniteScores: mockRubric, // Still mock - will be replaced in next step
-    slideHealthScore,
   };
 }
 

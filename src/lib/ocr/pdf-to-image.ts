@@ -4,18 +4,10 @@
  */
 
 import path from 'path';
-// Legacy build is required for Node.js — the standard build refuses to run without a browser worker
+// Legacy build required for Node.js — compatible with pdfjs-dist v5 which also ships legacy/build/
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { createCanvas } from '@napi-rs/canvas';
 import { log } from '../utils/logger';
-
-// Point pdfjs at the bundled worker file so it can spin up an in-process fake worker.
-// The file:// scheme is required for Node.js Worker URL resolution.
-const workerPath = path.resolve(
-  process.cwd(),
-  'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
-);
-GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
 
 const DEFAULT_SCALE = 2.0;
 
@@ -33,6 +25,11 @@ export async function renderPdfPageToImageBuffer(
   scale: number = DEFAULT_SCALE
 ): Promise<Buffer> {
   log.info(`Rendering PDF page ${pageNumber} to image (scale=${scale})`);
+
+  // Set workerSrc inside function (not module-level) so pdf-parse initializing
+  // its own pdfjs instance cannot overwrite this before getDocument() runs.
+  const workerPath = path.resolve(process.cwd(), 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
+  GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
 
   const data = new Uint8Array(pdfBuffer);
 

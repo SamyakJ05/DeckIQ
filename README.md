@@ -21,6 +21,7 @@ Founders spend weeks on pitch decks, yet 90%+ never get a second meeting. The co
 |---|---|
 | Primary IDE & code generation | **IBM Bob** (Plan Mode, Literate Coding, UI Scaffolding, Test Generation) |
 | Slide-level NLU | **IBM Watson NLU** — sentiment, tone, entities, keywords per slide |
+| Visual content extraction | **IBM watsonx.ai Granite Vision** (`meta-llama/llama-3-2-11b-vision-instruct`) |
 | Semantic scoring & rewrite | **IBM watsonx.ai Granite** (`ibm/granite-3-3-8b-instruct`) |
 
 ### Full Stack
@@ -29,7 +30,8 @@ Founders spend weeks on pitch decks, yet 90%+ never get a second meeting. The co
 |---|---|
 | Frontend | Next.js 16 (App Router), React 19, Tailwind CSS 4 |
 | Backend | Next.js API Routes, TypeScript strict |
-| Parsing | `pdf-parse`, `officeparser` |
+| Parsing | `pdf-parse`, `officeparser`, `pdfjs-dist` (image rendering) |
+| Vision Analysis | IBM watsonx.ai multimodal models, `sharp` (image compression) |
 | Testing | Jest + ts-jest |
 | Runtime | Node.js 20+ |
 
@@ -38,11 +40,12 @@ Founders spend weeks on pitch decks, yet 90%+ never get a second meeting. The co
 ## Features
 
 - **Upload** — drag-and-drop PDF or PPTX (up to 50 MB)
+- **Vision-Based Extraction** — extracts data from charts, graphs, tables, and images using Granite Vision (PDF only)
 - **Deck Health Score** — single 0–100 score with weighted 10-dimension breakdown
 - **VC Rubric** — Problem Clarity, Solution Fit, Market Size, Traction, Business Model, Competitive Moat, Team Strength, Ask Clarity, Narrative Flow, Visual Cohesion
 - **Top-3 Critical Fixes** — prioritised, slide-specific action items
 - **Investor Perspective Summary** — Granite-generated first-person VC take
-- **Per-slide Analysis** — NLU sentiment + rubric scores for every slide
+- **Per-slide Analysis** — NLU sentiment + rubric scores + visual context for every slide
 - **Rewrite Suggestions** — on-demand Granite rewrites per slide
 - **Emotional Journey** — sentiment arc across the deck
 - **Re-score** — adjust rubric weights and re-run scoring without re-calling NLU
@@ -70,17 +73,20 @@ Bob session transcripts are preserved in [`bob_sessions/`](bob_sessions/) as hac
 ```
 Upload (PDF/PPTX)
   → Parse slides to raw text
+  → [PDF only] Extract slide images → Granite Vision analysis
   → Segment into SlideContent[]
   → Watson NLU per slide (parallel, 10s timeout)
   → Build deck structural map
-  → Granite: 10-dimension rubric scoring
+  → Granite: 10-dimension rubric scoring (with visual context)
   → Aggregate scores → Deck Health Score
   → Granite: Top-3 Critical Fixes
   → Granite: Investor Perspective Summary
   → Return DeckAnalysisResult JSON
 ```
 
-Target: **< 45 seconds** for a 15-slide deck.
+Target: **< 60 seconds** for a 15-slide deck (including vision analysis).
+
+**Vision Extraction:** Charts, graphs, tables, and images are analyzed to extract data that text-only parsing misses. For example, a traction slide with an MRR growth chart will score higher because Granite can "see" the actual numbers. See [`docs/VISION_EXTRACTION_GUIDE.md`](docs/VISION_EXTRACTION_GUIDE.md) for details.
 
 ---
 
@@ -105,7 +111,12 @@ NLU_URL=https://api.us-south.natural-language-understanding.watson.cloud.ibm.com
 WATSONX_API_KEY=your_watsonx_api_key
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
 WATSONX_PROJECT_ID=your_project_id
+
+# Vision Model (optional, defaults to llama-3-2-11b-vision-instruct)
+VISION_MODEL=meta-llama/llama-3-2-11b-vision-instruct
 ```
+
+**Note:** Vision extraction requires a multimodal vision model in your watsonx.ai project. See [`docs/VISION_EXTRACTION_GUIDE.md`](docs/VISION_EXTRACTION_GUIDE.md) for setup instructions.
 
 ### Install & Run
 
@@ -139,6 +150,9 @@ src/
 ├── lib/
 │   ├── parsers/                  # PDF + PPTX → text per slide
 │   ├── segmentation/             # Text → SlideContent[]
+│   ├── vision/                   # PDF → images → visual context extraction
+│   │   ├── pdf-to-images.ts      # Slide image extraction
+│   │   └── vision-client.ts      # Granite Vision API wrapper
 │   ├── ibm/
 │   │   ├── nlu-client.ts         # Watson NLU wrapper
 │   │   ├── granite-client.ts     # watsonx.ai Granite wrapper

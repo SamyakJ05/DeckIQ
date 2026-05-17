@@ -30,6 +30,38 @@ export interface SlideContent {
   bodyText: string;
   estimatedSlideType: SlideType;
   usedOcr?: boolean; // True if OCR was used to extract text from image-only page
+  visualContext?: VisualSlideContext; // Visual analysis from Granite Vision
+}
+
+// ============================================================================
+// Vision Analysis Types
+// ============================================================================
+
+export interface VisualSlideContext {
+  hasCharts: boolean;
+  hasImages: boolean;
+  hasTables: boolean;
+  chartData: string;       // Extracted values/labels from charts
+  imageDescriptions: string; // What images/logos are visible
+  tableData: string;       // Extracted table content
+  layoutDescription: string; // Overall slide layout summary
+  rawVisualText: string;   // Full vision model output
+  // Design quality assessment fields
+  designScore?: number;           // 1-10 overall design quality
+  densityRating?: 'clean' | 'moderate' | 'cluttered';
+  hasVisualHierarchy?: boolean;   // clear focal point / headline
+  colorDiscipline?: 'consistent' | 'varied' | 'chaotic';
+  whitespaceQuality?: 'generous' | 'tight' | 'cramped';
+  typographyNotes?: string;       // e.g. "too many font sizes", "good hierarchy"
+  designFeedback?: string;        // 1-2 sentence actionable design note
+}
+
+export interface SlideImage {
+  slideNumber: number;
+  base64: string;       // base64-encoded image (PNG or JPEG)
+  width: number;
+  height: number;
+  mimeType?: string;    // MIME type (e.g., 'image/jpeg', 'image/png')
 }
 
 // ============================================================================
@@ -117,6 +149,9 @@ export interface SlideAnalysis {
   graniteScores: RubricScores;
   slideHealthScore: number;
   usedOcr?: boolean; // True if OCR was used to extract text from image-only page
+  visualContext?: VisualSlideContext; // Visual analysis from Granite Vision
+  image?: string;    // base64-encoded slide image (no data: prefix)
+  imageMime?: string; // MIME type for the image (defaults to 'image/jpeg')
 }
 
 // ============================================================================
@@ -168,6 +203,12 @@ export interface DeckAnalysisResult {
   criticalFixes: CriticalFix[];
   investorSummary: string;
   emotionalJourney: EmotionalJourneyPoint[];
+  deckDesign?: {
+    fontConsistencyScore: number;
+    colorConsistencyScore: number;
+    globalFonts: string[];
+    globalColors: string[];
+  };
 }
 
 // ============================================================================

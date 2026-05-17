@@ -47,10 +47,13 @@ ${visualContext.tableData}` : '❌ No tables detected.'}
 
 Visual layout: ${visualContext.layoutDescription}
 
+${visualContext.designScore ? `DESIGN: Score ${visualContext.designScore}/10 · ${visualContext.densityRating} · ${visualContext.designFeedback}` : ''}
+
 ⚠️ CRITICAL: The chart and table data above is REAL DATA extracted from the slide visuals.
 Use it when scoring tractionEvidence, marketSize, businessModel, and askClarity.
 A slide with a growth chart showing revenue data MUST score higher on tractionEvidence than one without.
 A slide with a TAM breakdown table MUST score higher on marketSize than one without.
+Design quality affects narrativeFlow and investorReadiness scores — cluttered slides with low design scores should be penalized.
 ` : '\n⚠️ Visual extraction unavailable for this slide. Score based on text only.\n';
 
   return `VC analyst. Score this pitch deck slide on 10 dimensions (0-10). Return ONLY JSON.

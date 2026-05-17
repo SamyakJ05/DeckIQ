@@ -93,8 +93,43 @@ export default function UploadPage() {
 
   function startFromUrl() {
     if (!urlValue.trim()) return;
-    // URL upload not yet supported — show error
-    setErrorMsg('URL upload not supported yet. Please upload a PDF or PPTX file.');
+    if (!urlValue.includes('docs.google.com/presentation')) {
+      setErrorMsg('Please enter a valid Google Slides URL (docs.google.com/presentation/...)');
+      return;
+    }
+    runUrlAnalysis(urlValue.trim());
+  }
+
+  async function runUrlAnalysis(url: string) {
+    setSteps(INITIAL_STEPS);
+    setCurrentStep(2);
+    setUploadState('processing');
+    setErrorMsg('');
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    advanceSteps(timers);
+
+    try {
+      const formData = new FormData();
+      formData.append('url', url);
+
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      timers.forEach(clearTimeout);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Analysis failed (${res.status})`);
+      }
+
+      const result = await res.json();
+      sessionStorage.setItem('deckiq-analysis', JSON.stringify(result));
+      sessionStorage.setItem('deckiq-filename', 'Google Slides Presentation');
+      router.push('/report');
+    } catch (err) {
+      timers.forEach(clearTimeout);
+      setErrorMsg(err instanceof Error ? err.message : 'Analysis failed. Please try again.');
+      setUploadState('idle');
+    }
   }
 
   function startAnalysis() {

@@ -9,10 +9,12 @@ import type { SlideImage } from '@/types';
 import { renderPdfPageToImageBuffer } from '../ocr/pdf-to-image';
 import { log } from '../utils/logger';
 
-// Vision API optimal dimensions (balance quality vs payload size)
-const VISION_WIDTH = 1024;
-const VISION_HEIGHT = 576;
-const VISION_QUALITY = 80;
+// Image storage dimensions (balance quality vs payload size)
+// Using JPEG at quality 0.75 with scale 1.2 to keep files under 80KB per slide
+const STORAGE_WIDTH = 1280;
+const STORAGE_HEIGHT = 720;
+const JPEG_QUALITY = 75; // 0.75 quality as specified
+const RENDER_SCALE = 1.2; // Reduced from 1.5 to keep file sizes down
 
 /**
  * Extract all slides as compressed base64 images for vision analysis
@@ -32,16 +34,16 @@ export async function extractSlideImages(
 
   for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
     try {
-      // Render page to high-res PNG using existing infrastructure
-      const imageBuffer = await renderPdfPageToImageBuffer(pdfBuffer, pageNumber, 2.0);
+      // Render page to image using existing infrastructure
+      const imageBuffer = await renderPdfPageToImageBuffer(pdfBuffer, pageNumber, RENDER_SCALE);
 
-      // Compress and resize for vision API payload limits
+      // Convert to JPEG at quality 0.75 for storage
       const compressed = await sharp(imageBuffer)
-        .resize(VISION_WIDTH, VISION_HEIGHT, { 
+        .resize(STORAGE_WIDTH, STORAGE_HEIGHT, {
           fit: 'inside',
-          withoutEnlargement: true 
+          withoutEnlargement: true
         })
-        .png({ quality: VISION_QUALITY, compressionLevel: 9 })
+        .jpeg({ quality: JPEG_QUALITY })
         .toBuffer();
 
       const base64 = compressed.toString('base64');
@@ -49,8 +51,9 @@ export async function extractSlideImages(
       results.push({
         slideNumber: pageNumber,
         base64,
-        width: VISION_WIDTH,
-        height: VISION_HEIGHT,
+        width: STORAGE_WIDTH,
+        height: STORAGE_HEIGHT,
+        mimeType: 'image/jpeg', // Add MIME type for JPEG
       });
 
       log.info(`Slide ${pageNumber} image extracted: ${Math.round(base64.length / 1024)}KB base64`);
@@ -62,6 +65,7 @@ export async function extractSlideImages(
         base64: '',
         width: 0,
         height: 0,
+        mimeType: 'image/jpeg',
       });
     }
   }

@@ -56,15 +56,17 @@ async function getIAMToken(): Promise<string> {
 }
 
 /**
- * Analyze a slide image using IBM Granite Vision to extract visual context
- * 
- * @param base64Image - Base64-encoded PNG image of the slide
+ * Analyze a slide image using IBM Granite Vision to extract visual context and design quality
+ *
+ * @param base64Image - Base64-encoded image of the slide
+ * @param slideText - Extracted text from the slide (for context)
  * @param slideType - Estimated slide type (helps guide analysis)
  * @param slideNumber - Slide number for logging
- * @returns Visual context extracted from the image
+ * @returns Visual context and design assessment extracted from the image
  */
 export async function analyzeSlideVisually(
   base64Image: string,
+  slideText: string,
   slideType: string,
   slideNumber: number
 ): Promise<VisualSlideContext> {
@@ -77,7 +79,7 @@ export async function analyzeSlideVisually(
 
   try {
     const iamToken = await getIAMToken();
-    const prompt = buildVisionPrompt(slideType, slideNumber);
+    const prompt = buildVisionPrompt(slideText, slideType, slideNumber);
 
     const response = await axios.post(
       `${WATSONX_URL}/ml/v1/text/chat?version=2024-05-31`,
@@ -134,17 +136,18 @@ export async function analyzeSlideVisually(
 }
 
 /**
- * Build the vision analysis prompt tailored to slide type
+ * Build the vision analysis prompt with both content and design assessment
  */
-function buildVisionPrompt(slideType: string, slideNumber: number): string {
-  return `You are analyzing slide ${slideNumber} of a startup pitch deck. Slide type: ${slideType}.
+function buildVisionPrompt(slideText: string, slideType: string, slideNumber: number): string {
+  return `You are a VC pitch deck expert analyzing slide ${slideNumber}. Slide type: ${slideType}.
 
-Examine this slide image carefully and extract ALL visual information. Be specific and precise.
+SLIDE TEXT (already extracted):
+${slideText}
 
-Return your analysis in this exact format:
+Analyze BOTH content and design. Return your analysis in this exact format:
 
 HAS_CHARTS: [yes/no]
-HAS_IMAGES: [yes/no]  
+HAS_IMAGES: [yes/no]
 HAS_TABLES: [yes/no]
 
 CHART_DATA:
@@ -162,11 +165,19 @@ TABLE_DATA:
 LAYOUT_SUMMARY:
 [One sentence describing the overall visual structure and key message conveyed visually.]
 
+DESIGN_SCORE: [1-10]
+DENSITY_RATING: [clean/moderate/cluttered]
+HAS_VISUAL_HIERARCHY: [yes/no]
+COLOR_DISCIPLINE: [consistent/varied/chaotic]
+WHITESPACE_QUALITY: [generous/tight/cramped]
+TYPOGRAPHY_NOTES: [Brief observation about font usage, sizing, hierarchy]
+DESIGN_FEEDBACK: [1-2 sentence actionable design improvement]
+
 Be thorough. Extract every number, percentage, and data point visible in charts and tables.`;
 }
 
 /**
- * Parse the vision model's structured response into VisualSlideContext
+ * Parse the vision model's structured response into VisualSlideContext with design fields
  */
 function parseVisualContext(raw: string): VisualSlideContext {
   const get = (key: string): string => {
@@ -178,6 +189,16 @@ function parseVisualContext(raw: string): VisualSlideContext {
   const imageDescriptions = get('IMAGE_DESCRIPTIONS');
   const tableData = get('TABLE_DATA');
   const layoutDescription = get('LAYOUT_SUMMARY');
+  
+  // Parse design fields
+  const designScoreStr = get('DESIGN_SCORE');
+  const designScore = designScoreStr ? parseInt(designScoreStr, 10) : undefined;
+  const densityRating = get('DENSITY_RATING').toLowerCase() as 'clean' | 'moderate' | 'cluttered' | undefined;
+  const hasVisualHierarchy = /HAS_VISUAL_HIERARCHY:\s*yes/i.test(raw);
+  const colorDiscipline = get('COLOR_DISCIPLINE').toLowerCase() as 'consistent' | 'varied' | 'chaotic' | undefined;
+  const whitespaceQuality = get('WHITESPACE_QUALITY').toLowerCase() as 'generous' | 'tight' | 'cramped' | undefined;
+  const typographyNotes = get('TYPOGRAPHY_NOTES');
+  const designFeedback = get('DESIGN_FEEDBACK');
 
   return {
     hasCharts: /HAS_CHARTS:\s*yes/i.test(raw),
@@ -188,6 +209,14 @@ function parseVisualContext(raw: string): VisualSlideContext {
     tableData: tableData === 'NONE' ? '' : tableData,
     layoutDescription,
     rawVisualText: raw,
+    // Design fields
+    designScore: designScore && !isNaN(designScore) ? designScore : undefined,
+    densityRating: densityRating && ['clean', 'moderate', 'cluttered'].includes(densityRating) ? densityRating : undefined,
+    hasVisualHierarchy: hasVisualHierarchy ? true : undefined,
+    colorDiscipline: colorDiscipline && ['consistent', 'varied', 'chaotic'].includes(colorDiscipline) ? colorDiscipline : undefined,
+    whitespaceQuality: whitespaceQuality && ['generous', 'tight', 'cramped'].includes(whitespaceQuality) ? whitespaceQuality : undefined,
+    typographyNotes: typographyNotes || undefined,
+    designFeedback: designFeedback || undefined,
   };
 }
 

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import type { DeckAnalysisResult, SlideAnalysis, SlideType } from '@/types';
+import type { DeckAnalysisResult, SlideAnalysis, SlideType, RubricScores, NLUResult } from '@/types';
 import { formatDimension } from '@/lib/formatters';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -220,14 +220,15 @@ export default function SlideReviewPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          slideText: rewrites[slideIdx],
-          slideIndex: slideIdx,
+          rewrittenText: rewrites[slideIdx],
+          slideNumber: slide.slideNumber,
+          slideType: slide.slideType,
         }),
       });
       
       if (res.ok) {
-        const data = await res.json() as { slideHealthScore: number; graniteScores: any };
-        
+        const data = await res.json() as { slideHealthScore: number; graniteScores: RubricScores; nluResult: NLUResult };
+
         // Update the slide in analysis state
         if (analysis) {
           const updatedSlides = [...analysis.perSlideAnalysis];
@@ -235,12 +236,27 @@ export default function SlideReviewPage() {
             ...updatedSlides[slideIdx],
             slideHealthScore: data.slideHealthScore,
             graniteScores: data.graniteScores,
-            rawText: rewrites[slideIdx], // Update with new text
+            rawText: rewrites[slideIdx],
           };
-          
+
+          // Recalculate aggregated rubric scores
+          const weights: Record<string, number> = {
+            problemClarity: 0.10, solutionFit: 0.10, marketSize: 0.10,
+            tractionEvidence: 0.20, businessModel: 0.10, competitiveMoat: 0.08,
+            teamStrength: 0.12, askClarity: 0.10, narrativeFlow: 0.08, investorReadiness: 0.02,
+          };
+          const dimKeys = Object.keys(weights) as (keyof RubricScores)[];
+          let newWeightedSum = 0;
+          for (const dim of dimKeys) {
+            const avg = updatedSlides.reduce((sum, s) => sum + s.graniteScores[dim].score, 0) / updatedSlides.length;
+            newWeightedSum += avg * weights[dim];
+          }
+          const newOverallScore = Math.round(newWeightedSum * 10);
+
           const updatedAnalysis = {
             ...analysis,
             perSlideAnalysis: updatedSlides,
+            overallScore: newOverallScore,
           };
           
           setAnalysis(updatedAnalysis);
@@ -322,11 +338,21 @@ export default function SlideReviewPage() {
               width: '100%', maxWidth: '760px', aspectRatio: '16 / 9',
               borderRadius: 'var(--r-md)', overflow: 'hidden', position: 'relative',
               boxShadow: '0 32px 64px rgba(0,0,0,0.5)', transition: 'opacity .2s',
-              background: slideBg(slide.slideType),
+              background: slide.image ? '#000' : slideBg(slide.slideType),
             }}>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: 'clamp(20px, 4%, 48px)' }}>
-                <RealSlideContent rawText={slide.rawText} slideType={slide.slideType} />
-              </div>
+              {slide.image ? (
+                <img
+                  src={`data:${slide.imageMime ?? 'image/jpeg'};base64,${slide.image}`}
+                  alt={`Slide ${slide.slideNumber}`}
+                  className="w-full h-full object-contain"
+                  style={{ borderRadius: 'var(--r-md)' }}
+                  draggable={false}
+                />
+              ) : (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: 'clamp(20px, 4%, 48px)' }}>
+                  <RealSlideContent rawText={slide.rawText} slideType={slide.slideType} />
+                </div>
+              )}
               <span style={{
                 position: 'absolute', bottom: '16px', right: '16px',
                 fontFamily: 'var(--font-mono)', fontSize: '11px',
@@ -563,6 +589,96 @@ export default function SlideReviewPage() {
                     </span>
                   )}
                 </div>
+                
+                {/* Design Quality Section */}
+                {slide.visualContext.designScore && (
+                  <div style={{
+                    marginTop: 'var(--sp-md)',
+                    paddingTop: 'var(--sp-md)',
+                    borderTop: '1px solid rgba(100,150,255,0.2)',
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: 'var(--sp-xs)',
+                    }}>
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        color: 'rgba(100,150,255,0.9)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                      }}>
+                        Design Quality
+                      </span>
+                      <span style={{
+                        fontSize: '13px',
+                        fontWeight: 700,
+                        color: slide.visualContext.designScore >= 7 ? 'rgb(74,222,128)' :
+                               slide.visualContext.designScore >= 5 ? 'rgb(250,204,21)' : 'rgb(248,113,113)',
+                      }}>
+                        {slide.visualContext.designScore}/10
+                      </span>
+                    </div>
+                    <div style={{
+                      display: 'flex',
+                      gap: '6px',
+                      flexWrap: 'wrap',
+                      marginBottom: 'var(--sp-sm)',
+                    }}>
+                      {slide.visualContext.densityRating && (
+                        <span style={{
+                          padding: '3px 8px',
+                          fontSize: '11px',
+                          borderRadius: '4px',
+                          background: 'rgba(100,150,255,0.15)',
+                          color: 'rgb(147,197,253)',
+                          border: '1px solid rgba(100,150,255,0.25)',
+                          fontWeight: 500,
+                        }}>
+                          {slide.visualContext.densityRating}
+                        </span>
+                      )}
+                      {slide.visualContext.whitespaceQuality && (
+                        <span style={{
+                          padding: '3px 8px',
+                          fontSize: '11px',
+                          borderRadius: '4px',
+                          background: 'rgba(100,150,255,0.15)',
+                          color: 'rgb(147,197,253)',
+                          border: '1px solid rgba(100,150,255,0.25)',
+                          fontWeight: 500,
+                        }}>
+                          {slide.visualContext.whitespaceQuality}
+                        </span>
+                      )}
+                      {slide.visualContext.colorDiscipline && (
+                        <span style={{
+                          padding: '3px 8px',
+                          fontSize: '11px',
+                          borderRadius: '4px',
+                          background: 'rgba(100,150,255,0.15)',
+                          color: 'rgb(147,197,253)',
+                          border: '1px solid rgba(100,150,255,0.25)',
+                          fontWeight: 500,
+                        }}>
+                          {slide.visualContext.colorDiscipline}
+                        </span>
+                      )}
+                    </div>
+                    {slide.visualContext.designFeedback && (
+                      <p style={{
+                        fontSize: '12px',
+                        color: 'var(--ink-light)',
+                        lineHeight: 1.4,
+                      }}>
+                        {slide.visualContext.designFeedback}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {slide.visualContext.chartData && (
                   <div style={{ marginTop: 'var(--sp-sm)' }}>
                     <div style={{
@@ -631,7 +747,28 @@ export default function SlideReviewPage() {
                 </div>
                 {rewrites[currentSlide] ? (
                   <>
-                    <div className="rewrite-content">{rewrites[currentSlide]}</div>
+                    {/* Slide preview of rewritten content */}
+                    <div style={{
+                      width: '100%',
+                      aspectRatio: '16 / 9',
+                      borderRadius: 'var(--r-md)',
+                      overflow: 'hidden',
+                      background: slideBg(slide.slideType),
+                      position: 'relative',
+                      marginBottom: 'var(--sp-md)',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                    }}>
+                      <div style={{ position: 'absolute', inset: 0, padding: 'clamp(14px, 3%, 28px)' }}>
+                        <RealSlideContent rawText={rewrites[currentSlide]} slideType={slide.slideType} />
+                      </div>
+                      <span style={{
+                        position: 'absolute', bottom: '10px', right: '12px',
+                        fontFamily: 'var(--font-mono)', fontSize: '9px',
+                        color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em',
+                      }}>
+                        AI REWRITE
+                      </span>
+                    </div>
                     <div style={{ display: 'flex', gap: 'var(--sp-md)', marginTop: 'var(--sp-md)' }}>
                       <button
                         onClick={() => navigator.clipboard.writeText(rewrites[currentSlide])}
@@ -681,20 +818,35 @@ export default function SlideReviewPage() {
       }}>
         {slides.map((s, i) => (
           <button key={s.slideNumber} onClick={() => setCurrentSlide(i)} style={{
-            flexShrink: 0, width: '64px', height: '40px', borderRadius: 'var(--r-sm)',
-            background: slideBg(s.slideType),
-            border: `1.5px solid ${i === currentSlide ? 'var(--primary)' : 'var(--hairline)'}`,
+            flexShrink: 0, width: '80px', height: '45px', borderRadius: 'var(--r-sm)',
+            background: s.image ? '#000' : slideBg(s.slideType),
+            border: `2px solid ${i === currentSlide ? 'var(--primary)' : 'var(--hairline)'}`,
             cursor: 'pointer', position: 'relative', overflow: 'hidden',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             transition: 'border-color .15s', padding: 0,
           }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--muted)', position: 'relative', zIndex: 1 }}>
-              {String(s.slideNumber).padStart(2, '0')}
-            </span>
+            {s.image ? (
+              <img
+                src={`data:${s.imageMime ?? 'image/jpeg'};base64,${s.image}`}
+                alt={`Slide ${s.slideNumber}`}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                }}
+                draggable={false}
+              />
+            ) : (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--muted)', position: 'relative', zIndex: 1 }}>
+                {String(s.slideNumber).padStart(2, '0')}
+              </span>
+            )}
             <div style={{
               position: 'absolute', bottom: '3px', right: '4px',
-              width: '5px', height: '5px', borderRadius: '50%',
+              width: '6px', height: '6px', borderRadius: '50%',
               background: slideColor(s.slideHealthScore),
+              border: '1px solid rgba(0,0,0,0.3)',
+              zIndex: 2,
             }} />
           </button>
         ))}
